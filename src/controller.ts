@@ -148,7 +148,7 @@ export class Controller {
     const blocks: ContentBlock[] = [];
     const names: string[] = [];
     for (const path of files) {
-      const f = this.store.file(path);
+      const f = this.store.resolveLink(path, `${project.folder}/_project/chat/x.md`);
       const rel = path.startsWith(project.folder + "/") ? path.slice(project.folder.length + 1) : path;
       names.push(rel);
       if (!f) {

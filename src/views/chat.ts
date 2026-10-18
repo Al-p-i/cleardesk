@@ -30,6 +30,8 @@ export class ChatView extends ItemView {
   private pending = 0;
   private folder = "";
   private showAll = false;
+  private missing = 0;
+  private missingEl!: HTMLElement;
   /** Files waiting to be sent with the next message. */
   private files: File[] = [];
   private filesEl!: HTMLElement;
@@ -52,6 +54,8 @@ export class ChatView extends ItemView {
     root.empty();
     root.addClass("cleardesk", "cd-chat");
     this.headerEl = root.createDiv("cd-chat-header");
+    this.missingEl = root.createDiv("cd-missing-bar");
+    this.missingEl.hide();
     this.buildSearch(root);
     this.listEl = root.createDiv("cd-chat-list");
     this.busyEl = root.createDiv({ cls: "cd-busy", text: "Thinking…" });
@@ -194,8 +198,13 @@ export class ChatView extends ItemView {
     if (reset || nearBottom) this.listEl.scrollTop = this.listEl.scrollHeight;
   }
 
+  private chatSource(e: Entry): string {
+    return `${this.folder}/_project/chat/${e.datetime.slice(0, 7)}.md`;
+  }
+
   private render(entries: Entry[]) {
     this.liveEl = null;
+    this.missing = 0;
     this.removeChild(this.md);
     this.md = new Component();
     this.addChild(this.md);
@@ -227,6 +236,17 @@ export class ChatView extends ItemView {
       this.renderEntry(e);
     }
     if (this.liveText) this.renderLive();
+    this.renderMissingBar();
+  }
+
+  /** "N attachments can't be found · Repair" under the header. */
+  private renderMissingBar() {
+    this.missingEl.empty();
+    this.missingEl.toggle(this.missing > 0);
+    if (!this.missing) return;
+    this.missingEl.createSpan({ text: `${this.missing} attachment${this.missing === 1 ? "" : "s"} can't be found. ` });
+    const fix = this.missingEl.createEl("a", { text: "Repair links…" });
+    fix.onClickEvent(() => this.plugin.openRepair());
   }
 
   // ---------- live (streaming) reply ----------
@@ -281,7 +301,10 @@ export class ChatView extends ItemView {
       if (e.kind === "me") {
         const { text, files } = splitEmbeds(e.body);
         if (text) appendLinkified(el.createDiv("cd-msg-body"), text);
-        renderAttachments(this.app, el, files);
+        this.missing += renderAttachments(this.app, el, files, {
+          resolve: (l) => this.plugin.store.resolveLink(l, this.chatSource(e)),
+          onMissing: (l) => this.plugin.heal(this.folder, l),
+        });
         if (/^\/[tn](\s|$)/.test(e.body)) el.addClass("is-command");
         copyText = text;
       } else {

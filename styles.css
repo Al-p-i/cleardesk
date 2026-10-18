@@ -247,3 +247,5 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-closed-chip-icon { display: inline-flex; }
 .cd-closed-chip-icon svg { width: 11px; height: 11px; }
 .cleardesk .cd-reopen { font-size: var(--cd-meta); height: auto; padding: 1px 8px; font-weight: var(--font-normal, 400); }
+.cd-missing-bar { font-size: var(--cd-meta); color: var(--text-warning); padding: 4px 14px; border-bottom: 1px solid var(--background-modifier-border); background: color-mix(in srgb, var(--text-warning) 8%, transparent); }
+.cd-missing-bar a { cursor: pointer; text-decoration: underline; }

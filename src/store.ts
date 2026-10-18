@@ -1,4 +1,5 @@
 import { App, TFile, TFolder, normalizePath, parseYaml, stringifyYaml } from "obsidian";
+import { AttachIndex, fingerprint, fingerprintSize, parseIndex, rewriteLinks } from "./relink";
 import {
   Entry, Task, appendEntry, appendTasks, isoDateTime, matchesAll, monthKey, moveEntry, newId, parseEntries, parseTasks,
   shiftEntry, splitEmbeds, splitFrontmatter, updateEntry, updateTask,
@@ -58,6 +59,7 @@ export function projectPaths(folder: string) {
     meta: `${sys}/project.md`,
     tasks: `${sys}/tasks.md`,
     notes: `${sys}/notes.md`,
+    attachments: `${sys}/attachments.json`,
     chatDir: `${sys}/chat`,
     chat: (month: string) => `${sys}/chat/${month}.md`,
   };
@@ -400,7 +402,59 @@ export class Store {
     const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "bin";
     const path = await this.uniquePath(dir, base, ext);
     await this.app.vault.createBinary(path, data);
+    await this.writeIndex(folder, (ix) => ({ ...ix, [path]: fingerprint(data) }));
     return path;
+  }
+
+  // ---------- keeping attachment links working ----------
+
+  async readIndex(folder: string): Promise<AttachIndex> {
+    return parseIndex(await this.read(projectPaths(folder).attachments));
+  }
+
+  async writeIndex(folder: string, fn: (ix: AttachIndex) => AttachIndex) {
+    await this.modify(projectPaths(folder).attachments, (text) => JSON.stringify(fn(parseIndex(text)), null, 1) + "\n");
+  }
+
+  /** The file a link points to: exact path first, then Obsidian's own link resolution (short links). */
+  resolveLink(link: string, sourcePath: string): TFile | null {
+    const exact = this.file(link);
+    if (exact) return exact;
+    const dest = this.app.metadataCache.getFirstLinkpathDest(link.split("#")[0], sourcePath);
+    return dest instanceof TFile ? dest : null;
+  }
+
+  /** Find a moved/renamed attachment by its recorded fingerprint. */
+  async findByFingerprint(folder: string, link: string): Promise<TFile | null> {
+    const fp = (await this.readIndex(folder))[link];
+    if (!fp) return null;
+    const size = fingerprintSize(fp);
+    for (const f of this.projectFiles(folder)) {
+      if (f.stat.size !== size) continue;
+      if (fingerprint(await this.readBinary(f)) === fp) return f;
+    }
+    return null;
+  }
+
+  /** ClearDesk's own files that hold links: chat, notes, tasks. */
+  linkFiles(folder: string): TFile[] {
+    const p = projectPaths(folder);
+    const months = this.chatMonths(folder).map((m) => p.chat(m));
+    return [...months, p.notes, p.tasks].map((x) => this.file(x)).filter((f): f is TFile => f !== null);
+  }
+
+  /** Point links in a project's chat, notes and tasks from oldPath to newPath; returns how many files changed. */
+  async rewriteProjectLinks(folder: string, oldPath: string, newPath: string): Promise<number> {
+    let changed = 0;
+    for (const f of this.linkFiles(folder)) {
+      const text = await this.app.vault.cachedRead(f);
+      if (!text.includes(oldPath)) continue;
+      const next = rewriteLinks(text, oldPath, newPath);
+      if (next === text) continue;
+      await this.app.vault.process(f, (t) => rewriteLinks(t, oldPath, newPath));
+      changed++;
+    }
+    return changed;
   }
 
   async uniquePath(folder: string, title: string, ext = "md"): Promise<string> {

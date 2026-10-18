@@ -11,12 +11,22 @@ const FILE_ICON: Record<string, string> = {
 };
 
 /** Thumbnails for images and chips for other files; clicking opens the file in Obsidian. */
-export function renderAttachments(app: App, parent: HTMLElement, paths: string[]) {
-  if (!paths.length) return;
+export function renderAttachments(
+  app: App,
+  parent: HTMLElement,
+  paths: string[],
+  opts: { resolve?: (link: string) => TFile | null; onMissing?: (link: string) => void } = {}
+): number {
+  if (!paths.length) return 0;
   const row = parent.createDiv("cd-attachments");
+  let missing = 0;
   for (const path of paths) {
-    const f = app.vault.getAbstractFileByPath(path);
-    const name = path.split("/").pop() ?? path;
+    const f = opts.resolve ? opts.resolve(path) : app.vault.getAbstractFileByPath(path);
+    if (!f) {
+      missing++;
+      opts.onMissing?.(path);
+    }
+    const name = (f instanceof TFile ? f.name : path.split("/").pop()) ?? path;
     const open = (ev: MouseEvent) => {
       ev.stopPropagation();
       if (f instanceof TFile) app.workspace.getLeaf("tab").openFile(f);
@@ -31,4 +41,5 @@ export function renderAttachments(app: App, parent: HTMLElement, paths: string[]
       chip.addEventListener("click", open);
     }
   }
+  return missing;
 }

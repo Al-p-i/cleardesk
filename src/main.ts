@@ -7,7 +7,9 @@ import { COLORS, HOME, HOME_COLOR, LEGACY_HOME, Project, Store, isClosed } from 
 import { CHAT_VIEW, ChatView } from "./views/chat";
 import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
-import { ImportModal, NewProjectModal } from "./modals";
+import { ImportModal, NewProjectModal, RepairModal } from "./modals";
+import { Candidate, MissingRef, fingerprint, planRepairs, renameInIndex } from "./relink";
+import { splitEmbeds } from "./format";
 import { ClearDeskSettingTab } from "./settings";
 
 interface Settings extends AiSettings {
@@ -76,6 +78,11 @@ export default class ClearDesk extends Plugin {
     });
     this.addCommand({ id: "new-project", name: "New project", callback: () => this.newProject() });
     this.addCommand({
+      id: "repair-links",
+      name: "Repair broken attachment links in the current project",
+      callback: () => this.openRepair(),
+    });
+    this.addCommand({
       id: "import-todos",
       name: "Import todos from old notes into the current project",
       callback: () => {
@@ -114,6 +121,7 @@ export default class ClearDesk extends Plugin {
       this.registerEvent(this.app.vault.on("create", onFile));
       this.registerEvent(this.app.vault.on("delete", onFile));
       this.registerEvent(this.app.vault.on("rename", onFile));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => this.followRename(oldPath, f.path)));
       if (!this.settings.setupDone) {
         await this.openWorkspace();
         this.settings.setupDone = true;
@@ -282,6 +290,86 @@ export default class ClearDesk extends Plugin {
     if (folder === this.store.home && isClosed(status)) return; // the default project always stays open
     await this.store.writeMeta(folder, (m) => ({ ...m, status }));
     await this.refreshProjects();
+  }
+
+  // ---------- attachment links ----------
+
+  private renameQueue: Promise<unknown> = Promise.resolve();
+
+  /** A file or folder moved inside Obsidian: point ClearDesk's links (and fingerprints) at the new place. */
+  private followRename(oldPath: string, newPath: string) {
+    if (/\/_project(\/|$)/.test(oldPath) || /\/_project(\/|$)/.test(newPath)) return;
+    this.renameQueue = this.renameQueue
+      .then(async () => {
+        for (const p of this.projects) {
+          await this.store.rewriteProjectLinks(p.folder, oldPath, newPath);
+          const ix = await this.store.readIndex(p.folder);
+          if (Object.keys(ix).some((k) => k === oldPath || k.startsWith(oldPath + "/"))) {
+            await this.store.writeIndex(p.folder, (cur) => renameInIndex(cur, oldPath, newPath));
+          }
+        }
+      })
+      .catch((e) => console.warn("ClearDesk: updating links after a move failed", e));
+  }
+
+  private healing = new Set<string>();
+
+  /** A link points nowhere: try to find the file by its fingerprint and fix the link. */
+  async heal(folder: string, link: string) {
+    const key = `${folder}::${link}`;
+    if (this.healing.has(key)) return;
+    this.healing.add(key);
+    const f = await this.store.findByFingerprint(folder, link);
+    if (!f) return;
+    await this.store.rewriteProjectLinks(folder, link, f.path);
+    await this.store.writeIndex(folder, (ix) => renameInIndex(ix, link, f.path));
+  }
+
+  /** Broken attachment links in a project: where they are and when they were sent. */
+  async findBrokenLinks(folder: string): Promise<{ missing: MissingRef[]; linked: Set<string> }> {
+    const missing: MissingRef[] = [];
+    const linked = new Set<string>();
+    const scan = (entries: { datetime: string; body: string }[], source: string) => {
+      for (const e of entries) {
+        for (const link of splitEmbeds(e.body).files) {
+          const f = this.store.resolveLink(link, source);
+          if (f) linked.add(f.path);
+          else missing.push({ path: link, sent: e.datetime });
+        }
+      }
+    };
+    for (const m of this.store.chatMonths(folder)) scan(await this.store.chat(folder, m), `${folder}/_project/chat/${m}.md`);
+    scan(await this.store.notes(folder), `${folder}/_project/notes.md`);
+    return { missing, linked };
+  }
+
+  async openRepair() {
+    const p = this.active();
+    if (!p) return;
+    const { missing, linked } = await this.findBrokenLinks(p.folder);
+    if (!missing.length) {
+      new Notice("ClearDesk: all attachment links in this project work.");
+      return;
+    }
+    const candidates: Candidate[] = this.store
+      .projectFiles(p.folder)
+      .filter((f) => !linked.has(f.path) && f.extension !== "md")
+      .map((f) => ({ path: f.path, ctime: f.stat.ctime }));
+    const plan = planRepairs(missing, candidates);
+    new RepairModal(this, p, plan).open();
+  }
+
+  /** Apply repairs: rewrite links and record fingerprints so these files can be found again. */
+  async applyRepairs(folder: string, pairs: { from: string; to: string }[]) {
+    for (const { from, to } of pairs) await this.store.rewriteProjectLinks(folder, from, to);
+    const prints: Record<string, string> = {};
+    for (const { to } of pairs) {
+      const f = this.store.file(to);
+      if (f) prints[to] = fingerprint(await this.store.readBinary(f));
+    }
+    await this.store.writeIndex(folder, (ix) => ({ ...ix, ...prints }));
+    this.events.trigger("chat", folder);
+    this.events.trigger("data", folder);
   }
 
   nextColor(): string {

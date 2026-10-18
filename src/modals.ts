@@ -2,6 +2,7 @@ import { Modal, Notice, Setting, TFolder } from "obsidian";
 import type ClearDesk from "./main";
 import type { OldTodo } from "./controller";
 import { Project, SYSTEM_DIR } from "./store";
+import type { MissingRef, Repair } from "./relink";
 
 /** Create a project: a new folder, or an existing top-level folder. */
 export class NewProjectModal extends Modal {
@@ -98,6 +99,56 @@ export class ImportModal extends Modal {
           this.close();
         })
       );
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+/** Preview of attachment-link repairs; nothing changes until "Repair". */
+export class RepairModal extends Modal {
+  constructor(private plugin: ClearDesk, private project: Project, private plan: { repairs: Repair[]; unresolved: MissingRef[] }) {
+    super(plugin.app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("cleardesk", "cd-import");
+    this.setTitle(`Repair attachment links in ${this.project.name}`);
+    const { repairs, unresolved } = this.plan;
+    const count = repairs.reduce((n, r) => n + r.pairs.length, 0);
+    const rel = (p: string) => (p.startsWith(this.project.folder + "/") ? p.slice(this.project.folder.length + 1) : p);
+    contentEl.createEl("p", {
+      cls: "cd-muted",
+      text: count
+        ? `Found new locations for ${count} attachment${count === 1 ? "" : "s"}. Files sent together in one message are matched by when they were created, so each message gets back the same set of files (which old name maps to which new name within a message may differ). Only links change; no files are moved.`
+        : "No matches found for the broken links.",
+    });
+    const list = contentEl.createDiv("cd-import-list");
+    for (const r of repairs) {
+      list.createDiv({ cls: "cd-import-file", text: `Message of ${r.sent}` });
+      for (const { from, to } of r.pairs) {
+        const row = list.createDiv("cd-import-row");
+        row.createSpan({ cls: "cd-muted", text: from.split("/").pop() ?? from });
+        row.createSpan({ text: ` → ${rel(to)}` });
+      }
+    }
+    if (unresolved.length) {
+      list.createDiv({ cls: "cd-import-file", text: "Can't be matched (left as they are)" });
+      for (const u of unresolved) list.createDiv({ cls: "cd-import-row cd-muted", text: `${u.path.split("/").pop()} · ${u.sent}` });
+    }
+    const s = new Setting(contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+    if (count) {
+      s.addButton((b) =>
+        b.setButtonText(`Repair ${count} link${count === 1 ? "" : "s"}`).setCta().onClick(async () => {
+          b.setDisabled(true);
+          await this.plugin.applyRepairs(this.project.folder, repairs.flatMap((r) => r.pairs));
+          new Notice(`Repaired ${count} attachment link${count === 1 ? "" : "s"}.`);
+          this.close();
+        })
+      );
+    }
   }
 
   onClose() {

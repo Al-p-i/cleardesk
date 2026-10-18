@@ -283,3 +283,57 @@ test("file tools stay inside the project folder", () => {
   assert.equal(moveTarget("APARTMENTS/Photos", "a.png", true), "APARTMENTS/Photos/a.png");
   assert.equal(moveTarget("APARTMENTS/Photos/b.png", "a.png", false), "APARTMENTS/Photos/b.png");
 });
+
+import { fingerprint, parseIndex, planRepairs, renameInIndex, rewriteLinks } from "../src/relink.ts";
+
+test("links follow moved files", () => {
+  const chat = "x\n![[A/Attachments/p 1.jpg]]\n![[A/Attachments/p 1.jpg|alt]] [[A/Attachments/p 1.jpg#^b]] ![[A/Attachments/p 10.jpg]]";
+  assert.equal(
+    rewriteLinks(chat, "A/Attachments/p 1.jpg", "A/Photos/kitchen.jpg"),
+    "x\n![[A/Photos/kitchen.jpg]]\n![[A/Photos/kitchen.jpg|alt]] [[A/Photos/kitchen.jpg#^b]] ![[A/Attachments/p 10.jpg]]"
+  );
+  assert.equal(rewriteLinks("![[A/Att/x.png]] ![[A/Attic.png]]", "A/Att", "A/Files"), "![[A/Files/x.png]] ![[A/Attic.png]]");
+  assert.deepEqual(renameInIndex({ "A/Att/x.png": "1:a", "A/y.png": "2:b" }, "A/Att", "A/Files"), { "A/Files/x.png": "1:a", "A/y.png": "2:b" });
+  assert.deepEqual(parseIndex("not json"), {});
+  const fp = fingerprint(new TextEncoder().encode("hello").buffer);
+  assert.equal(fp, "5:4f9f2cab");
+  assert.notEqual(fingerprint(new TextEncoder().encode("hellp").buffer), fp);
+});
+
+test("repairing broken attachment links by batch", () => {
+  const at = (hm: string, s = 0) => new Date(2026, 9, 18, +hm.slice(0, 2), +hm.slice(3, 5), s).getTime();
+  const old = (n: string) => `A/Attachments/${n}`;
+  const missing = [
+    ...[1, 2, 3, 4].map((i) => ({ path: old(`Pasted image 2026-10-18 1137 ${i}.jpg`), sent: "2026-10-18 11:37" })),
+    ...[1, 2, 3, 4].map((i) => ({ path: old(`Pasted image 2026-10-18 1225 ${i}.jpg`), sent: "2026-10-18 12:25" })),
+    { path: old("81403343620__15EF.mov"), sent: "2026-10-18 12:25" },
+    { path: old("81404198864__AFD9.mov"), sent: "2026-10-18 14:47" }, // kept its name
+    { path: old("Pasted image 2026-10-18 1447 1.jpg"), sent: "2026-10-18 14:47" },
+    { path: old("me.jpg"), sent: "2026-10-17 21:10" }, // nothing to match
+    { path: old("Pasted image 2026-10-18 1559.jpg"), sent: "2026-10-18 16:00" }, // file saved at 15:59:59
+  ];
+  const c = (path: string, ms: number) => ({ path, ctime: ms });
+  const candidates = [
+    c("A/Attachments/219 St Johns Pl/Kitchen.jpg", at("11:37", 2)),
+    c("A/Attachments/219 St Johns Pl/Bedroom.jpg", at("11:37", 2)),
+    c("A/Attachments/219 St Johns Pl/Second bedroom.jpg", at("11:37", 2)),
+    c("A/Attachments/219 St Johns Pl/Living room.jpg", at("11:37", 2)),
+    c("A/Attachments/87 Smith St/Video.mov", at("12:25", 37)),
+    ...["Bathroom", "Kitchen", "Entry", "Second bedroom"].map((n) => c(`A/Attachments/87 Smith St/${n}.jpg`, at("12:25", 37))),
+    c("A/Attachments/179 N 10th St/81404198864__AFD9.mov", at("14:47", 43)),
+    c("A/Attachments/179 N 10th St/N 10th St 01.jpg", at("14:47", 42)),
+    c("A/Attachments/Late.jpg", at("15:59", 59)),
+  ];
+  const { repairs, unresolved } = planRepairs(missing, candidates);
+  const pairs = Object.fromEntries(repairs.flatMap((r) => r.pairs.map((p) => [p.from.split("/").pop(), p.to.split("/").slice(2).join("/")])));
+  assert.equal(pairs["81404198864__AFD9.mov"], "179 N 10th St/81404198864__AFD9.mov", "same name wins");
+  assert.equal(pairs["81403343620__15EF.mov"], "87 Smith St/Video.mov", "video pairs with video");
+  assert.equal(pairs["Pasted image 2026-10-18 1447 1.jpg"], "179 N 10th St/N 10th St 01.jpg");
+  assert.equal(pairs["Pasted image 2026-10-18 1559.jpg"], "Late.jpg", "minute before the message counts");
+  assert.deepEqual(
+    [1, 2, 3, 4].map((i) => pairs[`Pasted image 2026-10-18 1137 ${i}.jpg`]).sort(),
+    ["219 St Johns Pl/Bedroom.jpg", "219 St Johns Pl/Kitchen.jpg", "219 St Johns Pl/Living room.jpg", "219 St Johns Pl/Second bedroom.jpg"]
+  );
+  assert.deepEqual(unresolved.map((u) => u.path), [old("me.jpg")]);
+  assert.equal(repairs.length, 4); // 11:37, 12:25, 14:47, 16:00
+});
