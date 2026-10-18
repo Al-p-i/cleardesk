@@ -1,0 +1,145 @@
+import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
+import type ClearDesk from "../main";
+import type { ProjectState } from "../main";
+import { COLORS, isClosed, projectPaths } from "../store";
+import { agoLabel, openTasksLabel, updatedLabel } from "../format";
+
+export const PROJECTS_VIEW = "cleardesk-projects";
+
+const STATUS: Record<string, { icon: string; label: string }> = {
+  "at-risk": { icon: "alert-triangle", label: "At risk" },
+  blocked: { icon: "octagon-x", label: "Blocked" },
+  done: { icon: "circle-check", label: "Done" },
+  archived: { icon: "archive", label: "Archived" },
+};
+
+export class ProjectsView extends ItemView {
+  private showClosed = false;
+
+  constructor(leaf: WorkspaceLeaf, private plugin: ClearDesk) {
+    super(leaf);
+  }
+
+  getViewType() { return PROJECTS_VIEW; }
+  getDisplayText() { return "Projects"; }
+  getIcon() { return "folders"; }
+
+  async onOpen() {
+    this.registerEvent(this.plugin.events.on("projects", () => this.render()));
+    this.registerEvent(this.plugin.events.on("active", () => this.render()));
+    this.registerEvent(this.plugin.events.on("tick", () => this.render()));
+    this.render();
+  }
+
+  render() {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("cleardesk", "cd-projects");
+    const list = root.createDiv("cd-project-list");
+    const open = this.plugin.projects.filter((p) => !isClosed(p.status));
+    const closed = this.plugin.projects
+      .filter((p) => isClosed(p.status))
+      .sort((a, b) => b.updated - a.updated);
+    let n = 0;
+    for (const p of open) this.renderRow(list, p, p.home ? "0" : ++n <= 9 ? String(n) : "");
+    const add = list.createDiv("cd-project cd-new");
+    setIcon(add.createSpan("cd-new-icon"), "plus");
+    add.createSpan({ text: "New project" });
+    add.onClickEvent(() => this.plugin.newProject());
+
+    if (closed.length) {
+      const toggle = list.createDiv({ cls: "cd-closed-toggle", text: `${this.showClosed ? "▾" : "▸"} Done & archived (${closed.length})` });
+      toggle.onClickEvent(() => {
+        this.showClosed = !this.showClosed;
+        this.render();
+      });
+      // Keep the open project visible even when the group is folded.
+      const active = this.plugin.active();
+      for (const p of closed) {
+        if (this.showClosed || p.folder === active?.folder) this.renderRow(list, p, "");
+      }
+    }
+  }
+
+  private renderRow(list: HTMLElement, p: ProjectState, key: string) {
+    const active = this.plugin.active();
+    const closed = isClosed(p.status);
+    const row = list.createDiv({ cls: "cd-project" + (p.folder === active?.folder ? " is-active" : "") + (closed ? " is-closed" : "") });
+    row.style.setProperty("--cd-color", p.color);
+    row.createSpan("cd-dot");
+    row.createSpan({ cls: "cd-project-name", text: p.name });
+    const st = STATUS[p.status];
+    if (st) {
+      const icon = row.createSpan({ cls: "cd-status is-" + p.status, attr: { "aria-label": st.label } });
+      setIcon(icon, st.icon);
+    }
+    if (p.openTasks && !closed) {
+      const label = openTasksLabel(p.openTasks) + (p.overdueTasks ? `, ${p.overdueTasks} overdue` : "");
+      const badge = row.createSpan({ cls: "cd-task-badge" + (p.overdueTasks ? " is-overdue" : ""), attr: { "aria-label": label } });
+      setIcon(badge.createSpan("cd-task-badge-icon"), "square-check");
+      badge.createSpan({ text: String(p.openTasks) });
+    }
+    if (p.updated) row.createSpan({ cls: "cd-updated", text: agoLabel(p.updated), attr: { "aria-label": updatedLabel(p.updated) } });
+    if (key) row.setAttr("aria-label", `Ctrl+${key}`);
+    row.onClickEvent(() => this.plugin.setActive(p.folder));
+    row.addEventListener("contextmenu", (ev) => this.menu(ev, p.folder));
+  }
+
+  private menu(ev: MouseEvent, folder: string) {
+    const p = this.plugin.projects.find((x) => x.folder === folder);
+    if (!p) return;
+    const store = this.plugin.store;
+    const save = async (fn: Parameters<typeof store.writeMeta>[1]) => {
+      await store.writeMeta(folder, fn);
+      await this.plugin.refreshProjects();
+    };
+    const menu = new Menu();
+    const status = (s: string) => () => this.plugin.setStatus(folder, s);
+    if (isClosed(p.status)) {
+      menu.addItem((i) => i.setTitle("Reopen").setIcon("rotate-ccw").onClick(status("")));
+      if (p.status === "done") menu.addItem((i) => i.setTitle("Archive instead").setIcon("archive").onClick(status("archived")));
+      else menu.addItem((i) => i.setTitle("Mark as done instead").setIcon("circle-check").onClick(status("done")));
+    } else {
+      menu.addItem((i) => i.setTitle("Status: on track").setChecked(!p.status).onClick(status("")));
+      menu.addItem((i) => i.setTitle("Status: at risk").setChecked(p.status === "at-risk").onClick(status("at-risk")));
+      menu.addItem((i) => i.setTitle("Status: blocked").setChecked(p.status === "blocked").onClick(status("blocked")));
+      if (!p.home) {
+        menu.addSeparator();
+        menu.addItem((i) => i.setTitle("Mark as done").setIcon("circle-check").onClick(status("done")));
+        menu.addItem((i) => i.setTitle("Archive").setIcon("archive").onClick(status("archived")));
+      }
+    }
+    menu.addSeparator();
+    const names = ["Teal", "Purple", "Coral", "Pink", "Blue", "Amber", "Green", "Red"];
+    COLORS.forEach((c, k) => {
+      menu.addItem((i) => {
+        i.setTitle(`Color: ${names[k]}`).setChecked(p.color === c).onClick(() => save((m) => ({ ...m, color: c })));
+        (i as any).dom?.style?.setProperty("--cd-swatch", c);
+        (i as any).dom?.addClass?.("cd-swatch-item");
+      });
+    });
+    if (!p.home && !isClosed(p.status)) {
+      menu.addSeparator();
+      const others = this.plugin.projects.filter((x) => !x.home && !isClosed(x.status));
+      const idx = others.findIndex((x) => x.folder === folder);
+      const swap = async (j: number) => {
+        if (!others[j]) return;
+        // re-number everyone so the order is stable, then swap the pair
+        for (let k = 0; k < others.length; k++) {
+          const order = k === idx ? j + 1 : k === j ? idx + 1 : k + 1;
+          await store.writeMeta(others[k].folder, (m) => ({ ...m, order }));
+        }
+        await this.plugin.refreshProjects();
+      };
+      menu.addItem((i) => i.setTitle("Move up").setIcon("arrow-up").onClick(() => swap(idx - 1)));
+      menu.addItem((i) => i.setTitle("Move down").setIcon("arrow-down").onClick(() => swap(idx + 1)));
+    }
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i.setTitle("Open project settings file").setIcon("file-cog").onClick(() =>
+        this.app.workspace.openLinkText(projectPaths(folder).meta, "", "tab")
+      )
+    );
+    menu.showAtMouseEvent(ev);
+  }
+}

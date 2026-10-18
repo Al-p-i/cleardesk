@@ -1,0 +1,264 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  appendEntry, appendTasks, daysUntil, dueLabel, parseEntries, parseTaskLine, parseTasks,
+  plainLinks, serializeTask, sortOpenTasks, splitFrontmatter, updateEntry, updateTask, whenLabel,
+  type Entry,
+} from "../src/format.ts";
+import { blockItems, blockOpener, closeBlock, parseMessage } from "../src/input.ts";
+
+const note: Entry = {
+  id: "n-abc123", datetime: "2026-10-17 15:10", kind: "note", tag: "Kreuzberg",
+  body: "great light\nstreet is loud", meta: {},
+};
+const fact: Entry = {
+  id: "f-def456", datetime: "2026-10-17 14:32", kind: "fact", tag: "Mitte",
+  body: "Deposit is 3 months' rent", meta: { source: "[[A/_project/chat/2026-10#^m-x1|chat]]" },
+};
+
+test("entries round-trip, including meta and multi-line bodies", () => {
+  const text = appendEntry(appendEntry("# Notes\n", note), fact);
+  const parsed = parseEntries(text);
+  assert.deepEqual(parsed, [note, fact]);
+  assert.ok(text.startsWith("# Notes\n\n### 2026-10-17 15:10 · note · Kreuzberg ^n-abc123\n"));
+});
+
+test("entry without tag, and body lines that look like headings stay in the body", () => {
+  const e: Entry = { ...note, tag: "", body: "### not a heading\nprice:: 1400 stays in body" };
+  const parsed = parseEntries(appendEntry("", e));
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].tag, "");
+  assert.equal(parsed[0].body, e.body);
+  assert.deepEqual(parsed[0].meta, {});
+});
+
+test("updateEntry edits and deletes by id, keeping the preamble", () => {
+  const text = appendEntry(appendEntry("# Notes", note), fact);
+  const edited = updateEntry(text, "f-def456", (e) => ({ ...e, body: "Deposit is 2x" }));
+  assert.equal(parseEntries(edited)[1].body, "Deposit is 2x");
+  assert.ok(edited.startsWith("# Notes\n\n"));
+  const deleted = updateEntry(text, "n-abc123", () => null);
+  assert.deepEqual(parseEntries(deleted).map((e) => e.id), ["f-def456"]);
+});
+
+test("task lines parse and serialize in Tasks-plugin order", () => {
+  const line = "- [ ] Send payslips 🔗 [[A/_project/chat/2026-10#^m-x1|chat]] 📅 2026-10-20 ^t-aa11bb";
+  const t = parseTaskLine(line)!;
+  assert.equal(t.text, "Send payslips");
+  assert.equal(t.due, "2026-10-20");
+  assert.equal(t.id, "t-aa11bb");
+  assert.equal(t.source, "[[A/_project/chat/2026-10#^m-x1|chat]]");
+  assert.equal(serializeTask(t), line);
+  const done = parseTaskLine("- [x] Call agency ✅ 2026-10-17")!;
+  assert.equal(done.done, true);
+  assert.equal(done.doneDate, "2026-10-17");
+  assert.equal(parseTaskLine("just text"), null);
+  assert.equal(parseTaskLine("  * [X] nested star")!.done, true);
+});
+
+test("updateTask toggles by id or raw line, and deletes", () => {
+  let text = appendTasks("# Tasks", [
+    { raw: "", done: false, text: "A", id: "t-1a" },
+    { raw: "", done: false, text: "B", due: "2026-10-19" },
+  ]);
+  const [a, b] = parseTasks(text);
+  text = updateTask(text, a, (t) => ({ ...t, done: true, doneDate: "2026-10-17" }));
+  text = updateTask(text, b, () => null);
+  assert.deepEqual(parseTasks(text).map((t) => [t.text, t.done]), [["A", true]]);
+  assert.ok(text.includes("- [x] A ✅ 2026-10-17 ^t-1a"));
+});
+
+test("sorting and date labels", () => {
+  const tasks = parseTasks("- [ ] none\n- [ ] late 📅 2026-10-10\n- [ ] soon 📅 2026-10-18");
+  assert.deepEqual(sortOpenTasks(tasks).map((t) => t.text), ["late", "soon", "none"]);
+  assert.equal(daysUntil("2026-10-10", "2026-10-17"), -7);
+  assert.equal(dueLabel("2026-10-16", "2026-10-17"), "-1d");
+  assert.equal(dueLabel("2026-10-17", "2026-10-17"), "today");
+  assert.equal(dueLabel("2026-10-18", "2026-10-17"), "tmrw");
+  assert.equal(dueLabel("2026-10-23", "2026-10-17"), "Fri");
+  assert.equal(dueLabel("2026-11-02", "2026-10-17"), "Nov 2");
+  assert.equal(whenLabel("2026-10-17 14:32", "2026-10-17"), "today 14:32");
+  assert.equal(whenLabel("2026-10-12 09:00", "2026-10-17"), "Oct 12");
+});
+
+test("plainLinks and frontmatter split", () => {
+  assert.equal(plainLinks("see [[a/b/Note|Label]] and [[x/Other#^id]]"), "see Label and Other");
+  assert.deepEqual(splitFrontmatter("---\ngoal: x\n---\nbody\n"), { yaml: "goal: x", body: "body\n" });
+  assert.deepEqual(splitFrontmatter("no fm"), { yaml: "", body: "no fm" });
+});
+
+test("command parsing: single lines, blocks, closers", () => {
+  assert.deepEqual(parseMessage("/t send payslips mon"), { kind: "task", items: ["send payslips mon"] });
+  assert.deepEqual(parseMessage("/n kreuzberg is loud"), { kind: "note", items: ["kreuzberg is loud"] });
+  assert.deepEqual(parseMessage("/t\n- a\n2. b\n\nc\n//"), { kind: "task", items: ["a", "b", "c"] });
+  assert.deepEqual(parseMessage("/n\nline one\nline two //"), { kind: "note", items: ["line one\nline two"] });
+  assert.deepEqual(parseMessage("what is the rent?"), { kind: "chat", items: ["what is the rent?"] });
+  assert.deepEqual(parseMessage("/tomorrow is a word"), { kind: "chat", items: ["/tomorrow is a word"] });
+  assert.equal(blockOpener(" /t "), "task");
+  assert.equal(blockOpener("/t x"), null);
+  assert.equal(closeBlock("a\nhttps://x.com"), null);
+  assert.equal(closeBlock("a\nb //"), "a\nb");
+  assert.equal(closeBlock("a\n//\n"), "a");
+  assert.deepEqual(blockItems("note", "\n\n"), []);
+});
+
+import { cleanKey, keyProblem } from "../src/key.ts";
+
+test("API key checks", () => {
+  assert.equal(keyProblem("sk-ant-test-abcDEF_123-xyz"), null);
+  assert.match(keyProblem("")!, /Add your Anthropic API key/);
+  assert.match(keyProblem("I don’t have a key yet")!, /spaces or special characters/);
+  assert.match(keyProblem("abc123")!, /start with sk-ant-/);
+  assert.equal(cleanKey(" sk-ant-abc​\n"), "sk-ant-abc");
+});
+
+import { cleanExport, googleExportUrl, looksLikeLoginPage } from "../src/google.ts";
+
+test("Google links map to export URLs", () => {
+  const id = "1AbCdEfGhIjKlMnOpQrStUv";
+  assert.deepEqual(googleExportUrl(`https://docs.google.com/document/d/${id}/edit?tab=t.abc123def#heading=h.8t6c`), {
+    kind: "doc", id, url: `https://docs.google.com/document/d/${id}/export?format=md&tab=t.abc123def`, part: "tab t.abc123def",
+  });
+  assert.equal(googleExportUrl(`https://docs.google.com/document/d/${id}/edit`)!.url, `https://docs.google.com/document/d/${id}/export?format=md`);
+  assert.equal(googleExportUrl(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=42`)!.url, `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=42`);
+  assert.equal(googleExportUrl(`https://docs.google.com/presentation/d/${id}/edit#slide=id.p`)!.url, `https://docs.google.com/presentation/d/${id}/export/txt`);
+  assert.equal(googleExportUrl(`https://drive.google.com/file/d/${id}/view?usp=sharing`)!.url, `https://drive.google.com/uc?export=download&id=${id}`);
+  assert.equal(googleExportUrl("https://example.com/doc"), null);
+  assert.equal(googleExportUrl("not a url"), null);
+});
+
+test("export cleanup and sign-in detection", () => {
+  const md = "# T\n\n![][image1]\n\ntext\n\n[image1]: <data:image/png;base64,AAAA>\n";
+  assert.equal(cleanExport(md), "# T\n\n![][image1]\n\ntext");
+  assert.equal(cleanExport("a ![logo](data:image/png;base64,AAA) b"), "a [image: logo] b");
+  assert.ok(looksLikeLoginPage("text/html; charset=utf-8", '<a href="https://accounts.google.com/signin">'));
+  assert.ok(!looksLikeLoginPage("text/x-markdown", "accounts.google.com"));
+});
+
+import { splitUrls } from "../src/format.ts";
+
+test("URLs are split out of plain text", () => {
+  assert.deepEqual(splitUrls("see https://docs.google.com/document/d/abc/edit?tab=t.1#h=2, ok"), [
+    { text: "see " },
+    { text: "https://docs.google.com/document/d/abc/edit?tab=t.1#h=2", url: "https://docs.google.com/document/d/abc/edit?tab=t.1#h=2" },
+    { text: ", ok" },
+  ]);
+  assert.deepEqual(splitUrls("(https://en.wikipedia.org/wiki/Foo_(bar))."), [
+    { text: "(" },
+    { text: "https://en.wikipedia.org/wiki/Foo_(bar)", url: "https://en.wikipedia.org/wiki/Foo_(bar)" },
+    { text: ")." },
+  ].map((x: any) => x));
+  assert.deepEqual(splitUrls("no links here"), [{ text: "no links here" }]);
+});
+
+import { splitEmbeds, withEmbeds } from "../src/format.ts";
+
+test("attachments as trailing embeds", () => {
+  const body = withEmbeds("what is this?", ["A/Attachments/shot.png", "A/Attachments/lease.pdf"]);
+  assert.equal(body, "what is this?\n![[A/Attachments/shot.png]]\n![[A/Attachments/lease.pdf]]");
+  assert.deepEqual(splitEmbeds(body), { text: "what is this?", files: ["A/Attachments/shot.png", "A/Attachments/lease.pdf"] });
+  assert.deepEqual(splitEmbeds("![[x.png]]"), { text: "", files: ["x.png"] });
+  assert.deepEqual(splitEmbeds("see ![[x.png]] inline"), { text: "see ![[x.png]] inline", files: [] });
+  assert.equal(withEmbeds("", []), "");
+});
+
+import { hostOf, linkLabel, moveEntry, pageTitle, shiftEntry } from "../src/format.ts";
+
+test("reordering entries", () => {
+  const mk = (id: string): Entry => ({ id, datetime: "2026-10-17 10:00", kind: "note", tag: "", body: id, meta: {} });
+  let text = ["n-aaaaaa", "n-bbbbbb", "n-cccccc"].map(mk).reduce((t, e) => appendEntry(t, e), "# Notes");
+  const order = (t: string) => parseEntries(t).map((e) => e.id[2]);
+  assert.deepEqual(order(moveEntry(text, "n-aaaaaa", "n-cccccc", "after")), ["b", "c", "a"]);
+  assert.deepEqual(order(moveEntry(text, "n-cccccc", "n-aaaaaa", "before")), ["c", "a", "b"]);
+  assert.deepEqual(order(moveEntry(text, "n-bbbbbb", "n-bbbbbb", "after")), ["a", "b", "c"]);
+  assert.deepEqual(order(shiftEntry(text, "n-bbbbbb", 1)), ["a", "c", "b"]);
+  assert.deepEqual(order(shiftEntry(text, "n-aaaaaa", -1)), ["a", "b", "c"]);
+  assert.ok(moveEntry(text, "n-aaaaaa", "n-cccccc", "after").startsWith("# Notes\n\n"));
+});
+
+test("link entries and page titles", () => {
+  const e: Entry = { id: "l-abc123", datetime: "2026-10-17 10:00", kind: "link", tag: "Mitte", body: "Mitte listing", meta: { url: "https://x.com/a?b=1" } };
+  assert.deepEqual(parseEntries(appendEntry("", e)), [e]);
+  assert.equal(pageTitle('<html><head><title>Apartment shortlist - Google Docs</title></head>'), "Apartment shortlist");
+  assert.equal(pageTitle('<meta property="og:title" content="2BR in Mitte &amp; garden"><title>ignored</title>'), "2BR in Mitte & garden");
+  assert.equal(pageTitle("<p>no title</p>"), "");
+  assert.equal(linkLabel("https://www.immobilienscout24.de/expose/123"), "immobilienscout24.de/expose/123");
+  assert.equal(hostOf("https://www.zillow.com/x"), "zillow.com");
+});
+
+import { agoLabel, updatedLabel } from "../src/format.ts";
+
+test("last-update labels", () => {
+  const now = new Date(2026, 9, 17, 23, 0).getTime(); // Sat Oct 17 2026, 23:00
+  const at = (...a: number[]) => new Date(...(a as [number, number, number, number, number])).getTime();
+  assert.equal(agoLabel(now - 20_000, now), "now");
+  assert.equal(agoLabel(now - 5 * 60_000, now), "5m");
+  assert.equal(agoLabel(at(2026, 9, 17, 8, 0), now), "15h");
+  assert.equal(agoLabel(at(2026, 9, 16, 23, 30), now), "yesterday");
+  assert.equal(agoLabel(at(2026, 9, 12, 9, 0), now), "Mon");
+  assert.equal(agoLabel(at(2026, 8, 30, 9, 0), now), "Sep 30");
+  assert.equal(agoLabel(at(2025, 11, 1, 9, 0), now), "Dec 1 2025");
+  assert.equal(updatedLabel(now - 3 * 3_600_000, now), "Updated 3h ago");
+  assert.equal(updatedLabel(now, now), "Updated just now");
+  assert.equal(updatedLabel(at(2026, 9, 16, 9, 0), now), "Updated yesterday");
+  assert.equal(updatedLabel(at(2026, 8, 30, 9, 0), now), "Updated Sep 30");
+});
+
+import { matchesAll, queryWords, snippetParts } from "../src/format.ts";
+
+test("chat search matching and snippets", () => {
+  const w = queryWords('  Deposit "Mitte" ');
+  assert.deepEqual(w, ["deposit", "mitte"]);
+  assert.ok(matchesAll("The deposit for Mitte is 3x rent", w));
+  assert.ok(!matchesAll("The deposit for Kreuzberg", w));
+  assert.ok(!matchesAll("anything", []));
+  const parts = snippetParts("The deposit for Mitte is 3x rent", w);
+  assert.deepEqual(parts, [
+    { text: "The ", hit: false }, { text: "deposit", hit: true }, { text: " for ", hit: false },
+    { text: "Mitte", hit: true }, { text: " is 3x rent", hit: false },
+  ]);
+  const long = "word ".repeat(60) + "needle " + "word ".repeat(60);
+  const p2 = snippetParts(long, ["needle"], 20);
+  assert.equal(p2[0].text, "…");
+  assert.equal(p2[p2.length - 1].text, "…");
+  assert.ok(p2.some((x) => x.hit && x.text === "needle"));
+  assert.ok(p2.map((x) => x.text).join("").length < 60);
+  assert.deepEqual(snippetParts("a+b (c)", ["+b", "(c)"]).filter((x) => x.hit).map((x) => x.text), ["+b", "(c)"]);
+});
+
+import { feedOrder } from "../src/format.ts";
+
+test("pinned entries come first, then newest first", () => {
+  const mk = (id: string, pinned = false): Entry => ({ id, datetime: "2026-10-17 10:00", kind: "note", tag: "", body: id, meta: pinned ? { pinned: "true" } : {} });
+  const file = [mk("n-1", true), mk("n-2"), mk("n-3", true), mk("n-4")];
+  assert.deepEqual(feedOrder(file).map((e) => e.id), ["n-3", "n-1", "n-4", "n-2"]);
+  const round = parseEntries(appendEntry("", mk("n-9", true)));
+  assert.equal(round[0].meta.pinned, "true");
+});
+
+import { openTasksLabel, taskCounts } from "../src/format.ts";
+
+test("open and overdue task counts", () => {
+  const tasks = parseTasks("- [ ] a 📅 2026-10-10\n- [ ] b 📅 2026-10-18\n- [ ] c\n- [x] d 📅 2026-10-01");
+  assert.deepEqual(taskCounts(tasks, "2026-10-18"), { open: 3, overdue: 1 });
+  assert.equal(openTasksLabel(0), "No open tasks");
+  assert.equal(openTasksLabel(1), "1 open task");
+  assert.equal(openTasksLabel(3), "3 open tasks");
+});
+
+import { fullDateLabel } from "../src/format.ts";
+
+test("full date label for message times", () => {
+  assert.equal(fullDateLabel("2026-10-17 14:32"), "Sat, Oct 17 2026, 14:32");
+});
+
+import { explorerScopeCss } from "../src/scope.ts";
+
+test("explorer scope CSS", () => {
+  assert.equal(explorerScopeCss(""), "");
+  const css = explorerScopeCss("Work/Atlas");
+  assert.ok(css.includes('[data-path="Work/Atlas"]'));
+  assert.ok(css.includes('[data-path^="Work/Atlas/"]'));
+  assert.ok(css.includes('[data-path="Work"]'), "ancestor stays visible");
+  assert.ok(css.endsWith("{ display: none; }"));
+});

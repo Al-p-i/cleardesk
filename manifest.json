@@ -1,0 +1,10 @@
+{
+  "id": "cleardesk",
+  "name": "ClearDesk",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.0",
+  "description": "A chat-first project workspace: switch projects, capture tasks and notes in chat, and see each project's state at a glance. Powered by Claude.",
+  "author": "Alexander",
+  "isDesktopOnly": false,
+  "authorUrl": "https://github.com/Al-p-i"
+}

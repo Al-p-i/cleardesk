@@ -1,0 +1,62 @@
+<!doctype html><meta charset="utf-8"><title>scope check</title>
+<div class="workspace-leaf-content" data-type="file-explorer"><div class="nav-files-container">
+ <div class="tree-item nav-folder mod-root"><div class="tree-item-self nav-folder-title" data-path="/"></div><div class="tree-item-children">
+  <div class="tree-item nav-folder" id="personal"><div class="tree-item-self nav-folder-title" data-path="Personal">Personal</div>
+    <div class="tree-item-children"><div class="tree-item nav-file" id="pnote"><div class="tree-item-self nav-file-title" data-path="Personal/note.md">note</div></div></div></div>
+  <div class="tree-item nav-folder" id="apt"><div class="tree-item-self nav-folder-title" data-path="APARTMENTS">APARTMENTS</div>
+    <div class="tree-item-children">
+      <div class="tree-item nav-file" id="pdf"><div class="tree-item-self nav-file-title" data-path="APARTMENTS/lease.pdf">lease.pdf</div></div>
+      <div class="tree-item nav-folder" id="att"><div class="tree-item-self nav-folder-title" data-path="APARTMENTS/Attachments">Attachments</div>
+        <div class="tree-item-children"><div class="tree-item nav-file" id="img"><div class="tree-item-self nav-file-title" data-path="APARTMENTS/Attachments/a.png">a.png</div></div></div></div>
+    </div></div>
+  <div class="tree-item nav-folder" id="apt2"><div class="tree-item-self nav-folder-title" data-path="APARTMENTS 2">APARTMENTS 2 (similar name)</div></div>
+  <div class="tree-item nav-file" id="rootfile"><div class="tree-item-self nav-file-title" data-path="todo.md">todo.md</div></div>
+ </div></div>
+</div></div>
+<pre id="out"></pre>
+<script>"use strict";
+var Scope = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+  var scope_exports = {};
+  __export(scope_exports, {
+    explorerScopeCss: () => explorerScopeCss
+  });
+  const css = (s) => JSON.stringify(s);
+  function explorerScopeCss(folder) {
+    if (!folder) return "";
+    const parts = folder.split("/");
+    const ancestors = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+    const keep = [
+      `:not(:has(> .tree-item-self[data-path=${css(folder)}]))`,
+      `:not(:has(> .tree-item-self[data-path^=${css(folder + "/")}]))`,
+      ...ancestors.map((a) => `:not(:has(> .tree-item-self[data-path=${css(a)}]))`)
+    ].join("");
+    return `.workspace-leaf-content[data-type="file-explorer"] .tree-item:not(.mod-root):has(> .tree-item-self[data-path])${keep} { display: none; }`;
+  }
+  return __toCommonJS(scope_exports);
+})();
+</script>
+<script>
+document.head.appendChild(Object.assign(document.createElement("style"), { textContent: Scope.explorerScopeCss("APARTMENTS") }));
+const vis = (id) => getComputedStyle(document.getElementById(id)).display !== "none" && document.getElementById(id).offsetParent !== null;
+const expect = { personal: false, pnote: false, apt: true, pdf: true, att: true, img: true, apt2: false, rootfile: false };
+const res = Object.entries(expect).map(([id, want]) => `${vis(id) === want ? "ok  " : "FAIL"} ${id}: ${vis(id) ? "visible" : "hidden"}`);
+document.getElementById("out").textContent = res.join("\n");
+document.title = res.some((r) => r.startsWith("FAIL")) ? "FAIL" : "ALL OK";
+</script>

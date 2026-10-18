@@ -1,0 +1,6 @@
+node_modules/
+build/
+test/harness/*.mjs
+.deploy-target
+data.json
+.DS_Store
