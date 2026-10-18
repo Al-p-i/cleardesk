@@ -59,7 +59,12 @@ export class ChatView extends ItemView {
     const composer = root.createDiv("cd-composer");
     this.hintEl = composer.createDiv("cd-hint");
     this.filesEl = composer.createDiv("cd-pending-files");
-    this.inputEl = composer.createEl("textarea", { cls: "cd-input", attr: { rows: "1" } });
+    // The input box holds the text area and, bottom right, the attach button (as in Claude).
+    const box = composer.createDiv("cd-input-box");
+    this.inputEl = box.createEl("textarea", { cls: "cd-input", attr: { rows: "1" } });
+    const attach = box.createEl("button", { cls: "cd-attach", attr: { "aria-label": "Attach files or images", type: "button" } });
+    setIcon(attach, "paperclip");
+    attach.addEventListener("click", () => this.pickerEl.click());
     this.inputEl.addEventListener("keydown", (ev) => this.onKey(ev));
     this.inputEl.addEventListener("input", () => this.onInput());
     this.pickerEl = composer.createEl("input", { type: "file", attr: { multiple: "", style: "display:none" } });
@@ -167,10 +172,8 @@ export class ChatView extends ItemView {
       for (const c of ["/t task", "/n note"]) this.hintEl.createEl("code", { cls: "cd-chip", text: c });
       this.inputEl.placeholder = p ? `Ask about ${p.home ? "anything" : p.name}, or type /t or /n` : "Create a project to start";
     }
-    const attach = this.hintEl.createSpan({ cls: "cd-icon-btn cd-attach", attr: { "aria-label": "Attach files or images" } });
-    setIcon(attach, "paperclip");
-    attach.onClickEvent(() => this.pickerEl.click());
     this.inputEl.toggleClass("is-block", !!this.block);
+    this.inputEl.parentElement?.toggleClass("is-block", !!this.block);
   }
 
   async reload(reset: boolean) {

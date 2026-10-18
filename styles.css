@@ -89,8 +89,14 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-hint .cd-chip { font-size: var(--cd-meta); color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); padding: 0 6px; background: none; }
 .cd-hint-block { color: var(--cd-color); font-size: var(--cd-meta); font-weight: 500; display: inline-flex; align-items: center; gap: 2px; }
 .cd-hint-block svg { width: 13px; height: 13px; }
-.cd-input { width: 100%; resize: none; min-height: 32px; max-height: 320px; border: 1px solid var(--cd-color) !important; border-radius: var(--radius-m); padding: 6px 9px; font-size: var(--cd-msg); line-height: var(--cd-lh); }
-.cd-input.is-block { font-family: var(--font-monospace); font-size: calc(var(--cd-msg) - 1.5px); border-width: 2px !important; }
+.cd-input-box { display: flex; align-items: flex-end; gap: 2px; border: 1px solid var(--cd-color); border-radius: var(--radius-m); background: var(--background-modifier-form-field); padding-right: 4px; }
+.cd-input-box:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--cd-color) 25%, transparent); }
+.cd-input-box.is-block { border-width: 2px; }
+.cleardesk .cd-input { flex: 1; min-width: 0; width: auto; resize: none; min-height: 32px; max-height: 320px; border: none !important; box-shadow: none !important; background: transparent !important; padding: 6px 9px; font-size: var(--cd-msg); line-height: var(--cd-lh); }
+.cd-input.is-block { font-family: var(--font-monospace); font-size: calc(var(--cd-msg) - 1.5px); }
+.cleardesk button.cd-attach { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-bottom: 2px; padding: 0; background: transparent; box-shadow: none; border: none; color: var(--text-faint); cursor: pointer; border-radius: var(--radius-s); }
+.cleardesk button.cd-attach:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.cd-attach svg { width: 16px; height: 16px; }
 
 /* ---------- panel ---------- */
 .cd-panel { padding: 8px 8px 24px; }
@@ -164,7 +170,6 @@ body.cd-font-text { --cd-font: var(--font-text); }
 
 /* ---------- attachments ---------- */
 .cd-chat.is-dragging .cd-composer { outline: 2px dashed var(--cd-color); outline-offset: -4px; background: var(--background-modifier-hover); }
-.cd-hint .cd-attach { margin-left: auto; }
 .cd-pending-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .cd-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .cd-msg.cd-me .cd-attachments { justify-content: flex-end; }
