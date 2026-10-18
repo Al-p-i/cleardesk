@@ -337,3 +337,15 @@ test("repairing broken attachment links by batch", () => {
   assert.deepEqual(unresolved.map((u) => u.path), [old("me.jpg")]);
   assert.equal(repairs.length, 4); // 11:37, 12:25, 14:47, 16:00
 });
+
+import { fingerprintSize, fpOf, isRemoved, markRemoved } from "../src/relink.ts";
+
+test("deleted attachments are marked, not forgotten", () => {
+  const ix = { "A/Att/x.png": "10:aaaa", "A/Att/y.png": "20:bbbb", "A/z.png": "30:cccc" };
+  const after = markRemoved(ix, "A/Att");
+  assert.deepEqual(after, { "A/Att/x.png": "removed:10:aaaa", "A/Att/y.png": "removed:20:bbbb", "A/z.png": "30:cccc" });
+  assert.deepEqual(markRemoved(after, "A/Att/x.png")["A/Att/x.png"], "removed:10:aaaa", "no double prefix");
+  assert.ok(isRemoved(after["A/Att/x.png"]) && !isRemoved(after["A/z.png"]) && !isRemoved(undefined));
+  assert.equal(fpOf("removed:10:aaaa"), "10:aaaa");
+  assert.equal(fingerprintSize("removed:10:aaaa"), 10);
+});

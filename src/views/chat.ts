@@ -240,13 +240,20 @@ export class ChatView extends ItemView {
   }
 
   /** "N attachments can't be found · Repair" under the header. */
+  /** Only shown when a repair can actually relink something; deleted files just show as "removed". */
   private renderMissingBar() {
     this.missingEl.empty();
-    this.missingEl.toggle(this.missing > 0);
+    this.missingEl.hide();
     if (!this.missing) return;
-    this.missingEl.createSpan({ text: `${this.missing} attachment${this.missing === 1 ? "" : "s"} can't be found. ` });
-    const fix = this.missingEl.createEl("a", { text: "Repair links…" });
-    fix.onClickEvent(() => this.plugin.openRepair());
+    const folder = this.folder;
+    this.plugin.repairableCount(folder).then((n) => {
+      if (!n || folder !== this.folder) return;
+      this.missingEl.empty();
+      this.missingEl.show();
+      this.missingEl.createSpan({ text: `${n} attachment${n === 1 ? "" : "s"} moved and can be relinked. ` });
+      const fix = this.missingEl.createEl("a", { text: "Repair links…" });
+      fix.onClickEvent(() => this.plugin.openRepair());
+    });
   }
 
   // ---------- live (streaming) reply ----------

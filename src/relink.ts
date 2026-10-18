@@ -14,8 +14,26 @@ export function fingerprint(data: ArrayBuffer): string {
   return `${bytes.length}:${(h >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+/** Index values are "<size>:<hash>", or "removed:<size>:<hash>" once the file was deleted in Obsidian. */
+export function fpOf(value: string): string {
+  return value.startsWith("removed:") ? value.slice(8) : value;
+}
+
+export function isRemoved(value: string | undefined): boolean {
+  return !!value && value.startsWith("removed:");
+}
+
 export function fingerprintSize(fp: string): number {
-  return Number(fp.split(":")[0]);
+  return Number(fpOf(fp).split(":")[0]);
+}
+
+/** Mark a deleted file (or everything in a deleted folder) as removed; the fingerprint is kept in case it was really a move. */
+export function markRemoved(index: AttachIndex, path: string): AttachIndex {
+  const out: AttachIndex = {};
+  for (const [p, v] of Object.entries(index)) {
+    out[p] = (p === path || p.startsWith(path + "/")) && !isRemoved(v) ? `removed:${v}` : v;
+  }
+  return out;
 }
 
 /** _project/attachments.json: vault path -> fingerprint, for every file attached in the chat. */

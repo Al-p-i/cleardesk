@@ -177,7 +177,9 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-note .cd-thumb { max-height: 90px; max-width: 100%; }
 .cd-file-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 240px; padding: 3px 8px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); background: var(--background-primary); font-size: var(--cd-meta); color: var(--text-muted); cursor: pointer; }
 .cd-file-chip:hover { color: var(--text-normal); border-color: var(--background-modifier-border-hover); }
-.cd-file-chip.is-missing { opacity: 0.6; text-decoration: line-through; cursor: default; }
+.cd-file-chip.is-missing { opacity: 0.7; cursor: default; border-style: dashed; }
+.cd-file-chip.is-missing:hover { color: var(--text-muted); border-color: var(--background-modifier-border); }
+.cd-file-removed { color: var(--text-faint); font-style: italic; margin-left: 2px; }
 .cd-file-chip.is-pending { cursor: default; padding-right: 4px; }
 .cd-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cd-file-icon, .cd-file-x { display: inline-flex; }

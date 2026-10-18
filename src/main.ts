@@ -8,7 +8,7 @@ import { CHAT_VIEW, ChatView } from "./views/chat";
 import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
 import { ImportModal, NewProjectModal, RepairModal } from "./modals";
-import { Candidate, MissingRef, fingerprint, planRepairs, renameInIndex } from "./relink";
+import { Candidate, MissingRef, fingerprint, fpOf, isRemoved, markRemoved, planRepairs, renameInIndex } from "./relink";
 import { splitEmbeds } from "./format";
 import { ClearDeskSettingTab } from "./settings";
 
@@ -122,6 +122,7 @@ export default class ClearDesk extends Plugin {
       this.registerEvent(this.app.vault.on("delete", onFile));
       this.registerEvent(this.app.vault.on("rename", onFile));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => this.followRename(oldPath, f.path)));
+      this.registerEvent(this.app.vault.on("delete", (f) => this.followDelete(f.path)));
       if (!this.settings.setupDone) {
         await this.openWorkspace();
         this.settings.setupDone = true;
@@ -312,6 +313,22 @@ export default class ClearDesk extends Plugin {
       .catch((e) => console.warn("ClearDesk: updating links after a move failed", e));
   }
 
+  /** An attached file was deleted in Obsidian: remember it as removed, so it isn't reported as broken. */
+  private followDelete(path: string) {
+    if (/\/_project(\/|$)/.test(path)) return;
+    const p = this.projects.find((x) => path.startsWith(x.folder + "/"));
+    if (!p) return;
+    this.renameQueue = this.renameQueue
+      .then(async () => {
+        const ix = await this.store.readIndex(p.folder);
+        if (Object.keys(ix).some((k) => k === path || k.startsWith(path + "/"))) {
+          await this.store.writeIndex(p.folder, (cur) => markRemoved(cur, path));
+          this.events.trigger("chat", p.folder);
+        }
+      })
+      .catch((e) => console.warn("ClearDesk: noting a deleted attachment failed", e));
+  }
+
   private healing = new Set<string>();
 
   /** A link points nowhere: try to find the file by its fingerprint and fix the link. */
@@ -322,19 +339,25 @@ export default class ClearDesk extends Plugin {
     const f = await this.store.findByFingerprint(folder, link);
     if (!f) return;
     await this.store.rewriteProjectLinks(folder, link, f.path);
-    await this.store.writeIndex(folder, (ix) => renameInIndex(ix, link, f.path));
+    // Found again, so it wasn't really removed (e.g. moved in Finder): keep a clean fingerprint.
+    await this.store.writeIndex(folder, (ix) => {
+      const next = renameInIndex(ix, link, f.path);
+      if (next[f.path]) next[f.path] = fpOf(next[f.path]);
+      return next;
+    });
   }
 
   /** Broken attachment links in a project: where they are and when they were sent. */
   async findBrokenLinks(folder: string): Promise<{ missing: MissingRef[]; linked: Set<string> }> {
     const missing: MissingRef[] = [];
     const linked = new Set<string>();
+    const index = await this.store.readIndex(folder);
     const scan = (entries: { datetime: string; body: string }[], source: string) => {
       for (const e of entries) {
         for (const link of splitEmbeds(e.body).files) {
           const f = this.store.resolveLink(link, source);
           if (f) linked.add(f.path);
-          else missing.push({ path: link, sent: e.datetime });
+          else if (!isRemoved(index[link])) missing.push({ path: link, sent: e.datetime });
         }
       }
     };
@@ -343,19 +366,30 @@ export default class ClearDesk extends Plugin {
     return { missing, linked };
   }
 
+  /** What a repair could do right now: matches for broken links (removed files excluded). */
+  async repairPlan(folder: string) {
+    const { missing, linked } = await this.findBrokenLinks(folder);
+    const candidates: Candidate[] = this.store
+      .projectFiles(folder)
+      .filter((f) => !linked.has(f.path) && f.extension !== "md")
+      .map((f) => ({ path: f.path, ctime: f.stat.ctime }));
+    return planRepairs(missing, candidates);
+  }
+
+  /** How many broken links a repair could fix (drives the chat's warning bar). */
+  async repairableCount(folder: string): Promise<number> {
+    const plan = await this.repairPlan(folder);
+    return plan.repairs.reduce((n, r) => n + r.pairs.length, 0);
+  }
+
   async openRepair() {
     const p = this.active();
     if (!p) return;
-    const { missing, linked } = await this.findBrokenLinks(p.folder);
-    if (!missing.length) {
+    const plan = await this.repairPlan(p.folder);
+    if (!plan.repairs.length && !plan.unresolved.length) {
       new Notice("ClearDesk: all attachment links in this project work.");
       return;
     }
-    const candidates: Candidate[] = this.store
-      .projectFiles(p.folder)
-      .filter((f) => !linked.has(f.path) && f.extension !== "md")
-      .map((f) => ({ path: f.path, ctime: f.stat.ctime }));
-    const plan = planRepairs(missing, candidates);
     new RepairModal(this, p, plan).open();
   }
 

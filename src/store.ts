@@ -1,5 +1,5 @@
 import { App, TFile, TFolder, normalizePath, parseYaml, stringifyYaml } from "obsidian";
-import { AttachIndex, fingerprint, fingerprintSize, parseIndex, rewriteLinks } from "./relink";
+import { AttachIndex, fingerprint, fingerprintSize, fpOf, parseIndex, rewriteLinks } from "./relink";
 import {
   Entry, Task, appendEntry, appendTasks, isoDateTime, matchesAll, monthKey, moveEntry, newId, parseEntries, parseTasks,
   shiftEntry, splitEmbeds, splitFrontmatter, updateEntry, updateTask,
@@ -426,8 +426,9 @@ export class Store {
 
   /** Find a moved/renamed attachment by its recorded fingerprint. */
   async findByFingerprint(folder: string, link: string): Promise<TFile | null> {
-    const fp = (await this.readIndex(folder))[link];
-    if (!fp) return null;
+    const value = (await this.readIndex(folder))[link];
+    if (!value) return null;
+    const fp = fpOf(value);
     const size = fingerprintSize(fp);
     for (const f of this.projectFiles(folder)) {
       if (f.stat.size !== size) continue;

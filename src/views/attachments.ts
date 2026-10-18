@@ -35,9 +35,13 @@ export function renderAttachments(
       const img = row.createEl("img", { cls: "cd-thumb", attr: { src: app.vault.getResourcePath(f), alt: name, title: name } });
       img.addEventListener("click", open);
     } else {
-      const chip = row.createDiv({ cls: "cd-file-chip" + (f ? "" : " is-missing"), attr: { title: f ? name : `${name} (missing)` } });
+      const chip = row.createDiv({
+        cls: "cd-file-chip" + (f ? "" : " is-missing"),
+        attr: { title: f ? name : `${name} is no longer in the vault` },
+      });
       setIcon(chip.createSpan("cd-file-icon"), FILE_ICON[name.split(".").pop()?.toLowerCase() ?? ""] ?? "file");
       chip.createSpan({ cls: "cd-file-name", text: name });
+      if (!f) chip.createSpan({ cls: "cd-file-removed", text: "removed" });
       chip.addEventListener("click", open);
     }
   }
