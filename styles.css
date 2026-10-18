@@ -84,6 +84,8 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-empty-title { font-size: var(--cd-msg); color: var(--text-normal); margin-bottom: 6px; }
 .cd-busy { color: var(--text-faint); font-size: var(--cd-meta); padding: 0 14px 3px; max-width: 820px; width: 100%; margin: 0 auto; }
 .cd-composer { padding: 6px 12px 10px; border-top: 1px solid var(--background-modifier-border); }
+/* Phones: keep the input above Obsidian's bottom bar, iOS's floating bar and the home indicator. */
+.is-mobile .cd-composer { padding-bottom: calc(10px + max(var(--cd-bottom-inset, 0px), env(safe-area-inset-bottom, 0px))); }
 .cd-composer > * { max-width: 820px; margin-left: auto; margin-right: auto; display: block; }
 .cd-hint { display: flex; gap: 6px; margin-bottom: 4px; min-height: 16px; }
 .cd-hint .cd-chip { font-size: var(--cd-meta); color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); padding: 0 6px; background: none; }
