@@ -251,3 +251,5 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cleardesk .cd-reopen { font-size: var(--cd-meta); height: auto; padding: 1px 8px; font-weight: var(--font-normal, 400); }
 .cd-missing-bar { font-size: var(--cd-meta); color: var(--text-warning); padding: 4px 14px; border-bottom: 1px solid var(--background-modifier-border); background: color-mix(in srgb, var(--text-warning) 8%, transparent); }
 .cd-missing-bar a { cursor: pointer; text-decoration: underline; }
+.cd-chips .cd-history { margin-left: auto; color: var(--text-faint); }
+.cd-chips .cd-history .cd-chip-icon svg { color: var(--text-faint); }

@@ -16,6 +16,8 @@ export class PanelView extends ItemView {
   private tag = "";
   private showOlder = false;
   private showDone = false;
+  /** Show facts the AI has replaced with newer ones (hidden by default). */
+  private showHistory = false;
   private editing = false;
   private dirty = false;
   /** Id of the note card being dragged, if any. */
@@ -243,8 +245,22 @@ export class PanelView extends ItemView {
     chip("Notes", this.filter === "note", set("note"));
     chip("Facts", this.filter === "fact", set("fact"), "sparkles");
     chip("Links", this.filter === "link", set("link"), "link");
+    const replaced = all.filter((n) => n.meta["replaced-by"]).length;
+    if (replaced) {
+      const h = chips.createEl("button", {
+        cls: "cd-chip cd-history" + (this.showHistory ? " is-on" : ""),
+        attr: { "aria-label": this.showHistory ? "Hide replaced facts" : "Show facts that were replaced by newer ones" },
+      });
+      setIcon(h.createSpan("cd-chip-icon"), "history");
+      h.createSpan({ text: this.showHistory ? `History (${replaced})` : `${replaced}` });
+      h.onClickEvent(() => {
+        this.showHistory = !this.showHistory;
+        this.render();
+      });
+    }
+    const visible = this.showHistory ? all : all.filter((n) => !n.meta["replaced-by"]);
     const counts = new Map<string, number>();
-    for (const n of all) if (n.tag) counts.set(n.tag, (counts.get(n.tag) ?? 0) + 1);
+    for (const n of visible) if (n.tag) counts.set(n.tag, (counts.get(n.tag) ?? 0) + 1);
     const tags = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => t);
     if (tags.length) {
       const tagRow = root.createDiv("cd-chips cd-tags");
@@ -256,7 +272,7 @@ export class PanelView extends ItemView {
 
     const byId = new Map(all.map((n) => [n.id, n]));
     const shown = feedOrder(
-      all.filter((n) => this.filter === "all" || n.kind === this.filter).filter((n) => !this.tag || n.tag === this.tag)
+      visible.filter((n) => this.filter === "all" || n.kind === this.filter).filter((n) => !this.tag || n.tag === this.tag)
     );
     const feed = root.createDiv("cd-feed");
     if (!shown.length) {
