@@ -29,6 +29,7 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 - **Attachments**: paste, drop or pick images, PDFs and text files; Claude reads them.
 - **Web and Google**: Claude can search the web and read pasted links, including Google Docs, Sheets and Slides shared via link.
 - **Documents**: ask for a comparison, plan or calculation and Claude writes it into the project folder, running real code for the maths.
+- **File organising**: ask Claude to sort photos and files; it can list, create folders, and move or rename within the project folder only (never deleting, never overwriting, never touching `_project/`), with one-click undo.
 - **Chat search** across one or all projects, with message times on hover.
 - **Focused file explorer**: the explorer shows only the current project's folder (the whole vault on Desk). Toggle it with a command.
 - Works on desktop and mobile; it only uses Obsidian's own APIs.

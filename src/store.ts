@@ -41,8 +41,13 @@ export interface Project extends ProjectMeta {
 /** Records the original content of every file a change touches, so it can be undone. */
 export class Tx {
   snapshots = new Map<string, string | null>();
+  /** Steps that reverse file moves and folder creation, run newest first on undo. */
+  undoOps: (() => Promise<void>)[] = [];
   snap(path: string, content: string | null) {
     if (!this.snapshots.has(path)) this.snapshots.set(path, content);
+  }
+  get changed(): boolean {
+    return this.snapshots.size > 0 || this.undoOps.length > 0;
   }
 }
 
@@ -104,6 +109,13 @@ export class Store {
   }
 
   async undo(tx: Tx) {
+    for (const op of [...tx.undoOps].reverse()) {
+      try {
+        await op();
+      } catch (e) {
+        console.warn("ClearDesk: an undo step failed", e);
+      }
+    }
     for (const [path, content] of tx.snapshots) {
       const f = this.file(path);
       if (content === null) {
@@ -288,6 +300,74 @@ export class Store {
   chatLink(folder: string, e: Entry): string {
     const month = e.datetime.slice(0, 7);
     return `[[${projectPaths(folder).chat(month).replace(/\.md$/, "")}#^${e.id}|chat]]`;
+  }
+
+  // ---------- organising project files (AI tools) ----------
+
+  isFolder(path: string): boolean {
+    return this.app.vault.getAbstractFileByPath(normalizePath(path)) instanceof TFolder;
+  }
+
+  /** Create a folder and any missing parents; undo removes the ones it created (if still empty). */
+  async createFolderTx(path: string, tx: Tx): Promise<boolean> {
+    const parts = normalizePath(path).split("/");
+    let created = false;
+    for (let i = 1; i <= parts.length; i++) {
+      const p = parts.slice(0, i).join("/");
+      const existing = this.app.vault.getAbstractFileByPath(p);
+      if (existing instanceof TFolder) continue;
+      if (existing) throw new Error(`"${p}" is a file, not a folder.`);
+      await this.app.vault.createFolder(p);
+      created = true;
+      tx.undoOps.push(async () => {
+        const f = this.app.vault.getAbstractFileByPath(p);
+        if (f instanceof TFolder && f.children.length === 0) await this.app.vault.delete(f);
+      });
+    }
+    return created;
+  }
+
+  /** Move or rename a file or folder through Obsidian (links are updated). Never overwrites. */
+  async moveTx(from: string, to: string, tx: Tx): Promise<void> {
+    const f = this.app.vault.getAbstractFileByPath(normalizePath(from));
+    if (!f) throw new Error("Nothing exists at that path.");
+    const dest = normalizePath(to);
+    if (dest === f.path) return;
+    if (this.app.vault.getAbstractFileByPath(dest)) throw new Error("Something already exists at the destination; pick another name.");
+    if (f instanceof TFolder && (dest + "/").startsWith(f.path + "/")) throw new Error("A folder can't be moved into itself.");
+    const parent = dest.split("/").slice(0, -1).join("/");
+    if (parent) await this.createFolderTx(parent, tx);
+    const original = f.path;
+    await this.app.fileManager.renameFile(f, dest);
+    tx.undoOps.push(async () => {
+      const g = this.app.vault.getAbstractFileByPath(dest);
+      if (g && !this.app.vault.getAbstractFileByPath(original)) await this.app.fileManager.renameFile(g, original);
+    });
+  }
+
+  /** The project's folders and files (excluding _project/), with size and date. */
+  listTree(folder: string, limit = 400): string[] {
+    const root = this.app.vault.getAbstractFileByPath(normalizePath(folder));
+    if (!(root instanceof TFolder)) return [];
+    const out: string[] = [];
+    const walk = (dir: TFolder) => {
+      const kids = [...dir.children].sort((a, b) => a.name.localeCompare(b.name));
+      for (const c of kids) {
+        if (out.length >= limit) return;
+        const rel = c.path.slice(root.path.length + 1);
+        if (rel === SYSTEM_DIR) continue;
+        if (c instanceof TFolder) {
+          out.push(`${rel}/`);
+          walk(c);
+        } else if (c instanceof TFile) {
+          const kb = c.stat.size / 1024;
+          const size = kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`;
+          out.push(`${rel}  (${size}, ${new Date(c.stat.mtime).toISOString().slice(0, 10)})`);
+        }
+      }
+    };
+    walk(root);
+    return out;
   }
 
   // ---------- project files (documents) ----------

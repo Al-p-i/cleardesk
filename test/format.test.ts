@@ -262,3 +262,24 @@ test("explorer scope CSS", () => {
   assert.ok(css.includes('[data-path="Work"]'), "ancestor stays visible");
   assert.ok(css.endsWith("{ display: none; }"));
 });
+
+import { moveTarget, projectPath, relPath } from "../src/paths.ts";
+
+test("file tools stay inside the project folder", () => {
+  const ok = (rel: string) => (projectPath("APARTMENTS", rel) as { path: string }).path;
+  const err = (rel: string) => (projectPath("APARTMENTS", rel) as { error: string }).error;
+  assert.equal(ok("Photos/Mitte/kitchen.jpg"), "APARTMENTS/Photos/Mitte/kitchen.jpg");
+  assert.equal(ok("./Photos//a.png"), "APARTMENTS/Photos/a.png");
+  assert.equal(ok("/Attachments/x.pdf"), "APARTMENTS/Attachments/x.pdf");
+  assert.equal(ok(""), "APARTMENTS");
+  assert.equal(ok("."), "APARTMENTS");
+  assert.match(err("../1. PERSONAL/secret.md"), /outside the project/);
+  assert.match(err("Photos/../../x"), /outside the project/);
+  assert.match(err("_project/chat/2026-10.md"), /_project/);
+  assert.match(err("a/b?.png"), /isn't a valid name/);
+  assert.match(err("file:///etc/passwd"), /not a URL/);
+  assert.match(err("C:/x"), /not a URL/);
+  assert.equal(relPath("APARTMENTS", "APARTMENTS/Photos/a.png"), "Photos/a.png");
+  assert.equal(moveTarget("APARTMENTS/Photos", "a.png", true), "APARTMENTS/Photos/a.png");
+  assert.equal(moveTarget("APARTMENTS/Photos/b.png", "a.png", false), "APARTMENTS/Photos/b.png");
+});

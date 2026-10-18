@@ -7,6 +7,7 @@ import {
 } from "./format";
 import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
+import { moveTarget, projectPath, relPath } from "./paths";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -76,7 +77,7 @@ export class Controller {
 
   private async receipt(project: Project, body: string, tx?: Tx): Promise<Entry> {
     const e = await this.store.appendChat(project.folder, "receipt", body);
-    if (tx && tx.snapshots.size) this.undos.set(e.id, tx);
+    if (tx && tx.changed) this.undos.set(e.id, tx);
     this.emit("chat", project.folder);
     return e;
   }
@@ -245,11 +246,22 @@ export class Controller {
     }
     const tx = new Tx();
     const receipts: string[] = [];
+    const moved: string[] = []; // "from → to" for the receipt
+    const madeFolders: string[] = [];
     const ctx = await this.context(project);
     const history = await this.history(project, me);
     const source = this.store.chatLink(project.folder, me);
 
-    const exec = async (name: string, input: Record<string, unknown>): Promise<ToolOutput> => {
+    // File operations run one at a time, even when the model asks for several at once.
+    let fileQueue: Promise<unknown> = Promise.resolve();
+    const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+      const run = fileQueue.then(fn, fn);
+      fileQueue = run.catch(() => {});
+      return run;
+    };
+    const exec = (name: string, input: Record<string, unknown>): Promise<ToolOutput> =>
+      ["list_files", "create_folder", "move_file"].includes(name) ? serial(() => execNow(name, input)) : execNow(name, input);
+    const execNow = async (name: string, input: Record<string, unknown>): Promise<ToolOutput> => {
       const s = (k: string) => String(input[k] ?? "").trim();
       switch (name) {
         case "add_fact": {
@@ -311,6 +323,31 @@ export class Controller {
           if (!["md", "txt", "csv", "json", "canvas"].includes(ext)) return `Can't read .${ext} files. Text, markdown, PDF and images work.`;
           const text = await this.store.read(path);
           return text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
+        }
+        case "list_files": {
+          const at = projectPath(project.folder, s("path"));
+          if ("error" in at) return at.error;
+          const tree = this.store.listTree(at.path);
+          return tree.length ? tree.join("\n") : "No files here.";
+        }
+        case "create_folder": {
+          const at = projectPath(project.folder, s("path"));
+          if ("error" in at) return at.error;
+          if (at.path === project.folder) return "Give the new folder a name.";
+          if (await this.store.createFolderTx(at.path, tx)) madeFolders.push(relPath(project.folder, at.path));
+          return `Folder ${relPath(project.folder, at.path)} is ready.`;
+        }
+        case "move_file": {
+          const from = projectPath(project.folder, s("from"));
+          if ("error" in from) return from.error;
+          const to = projectPath(project.folder, s("to"));
+          if ("error" in to) return to.error;
+          if (from.path === project.folder) return "The project folder itself can't be moved.";
+          const name = from.path.split("/").pop()!;
+          const dest = moveTarget(to.path, name, this.store.isFolder(to.path) || to.path === project.folder);
+          await this.store.moveTx(from.path, dest, tx);
+          moved.push(`${relPath(project.folder, from.path)} → ${relPath(project.folder, dest)}`);
+          return `Moved to ${relPath(project.folder, dest)}.`;
         }
         case "read_google_doc": {
           const ex = googleExportUrl(s("url"));
@@ -375,10 +412,16 @@ export class Controller {
       if (reply) await this.store.appendChat(project.folder, "ai", reply);
     } finally {
       this.onStream?.(project.folder, null, "");
+      if (moved.length || madeFolders.length) {
+        const parts = [];
+        if (moved.length) parts.push(moved.length <= 3 ? moved.join(", ") : `${moved.length} items moved or renamed`);
+        if (madeFolders.length) parts.push(`${madeFolders.length === 1 ? "folder" : "folders"} ${madeFolders.join(", ")} created`);
+        receipts.push(`📁 ${parts.join(" · ")}`);
+      }
       // Changes made before a failure still get a receipt (and undo).
       if (receipts.length) await this.receipt(project, receipts.join("\n"), tx);
       else this.emit("chat", project.folder);
-      if (tx.snapshots.size) this.emit("data", project.folder);
+      if (tx.changed) this.emit("data", project.folder);
     }
   }
 
@@ -502,6 +545,7 @@ How the workspace works:
 - Key facts are the 3-6 label/value pairs on the project card that shape decisions (budget, deadline, shortlist...). Call set_key_fact when one of them changes or a crucial new one appears. Keep labels to 1-2 words and values short.
 - The goal is written by the owner. Never change it. If something contradicts it, point that out in your reply.
 - Documents: when asked for a document (comparison, plan, calculation), call create_document with a precise, complete brief; it runs real code for calculations. Use read_file to read files in the project folder (text, markdown, PDF and images) and search_chat to find something said earlier that isn't in the recent conversation.
+- Organising files: use list_files to see the project's folders, create_folder to add folders, and move_file to move or rename files and folders (it never overwrites, and links to moved files are updated). Everything is limited to this project's folder; ClearDesk's own _project folder can't be touched, and nothing can be deleted. To name photos well, look at them with read_file first. Before reorganising more than a few files, say in one line what you'll do, then do it.
 - Google links: for docs.google.com and drive.google.com links always use read_google_doc, never web_fetch (web_fetch only sees an empty preview of Google Docs). A Docs link without a tab returns all tabs; with ?tab= it returns that tab only, so if the owner asks about another part of the document, read the link again without the tab parameter. Private files can't be opened: suggest sharing as "Anyone with the link can view", or downloading into the project folder.
 - The web: when web_search and web_fetch are available, use them for current information and to read other links the owner pastes.
 
@@ -518,6 +562,9 @@ const WEB_TOOLS: Anthropic.Beta.Messages.BetaToolUnion[] = [
 ];
 
 const TOOL_STATUS: Record<string, string> = {
+  list_files: "Looking at the files…",
+  create_folder: "Creating a folder…",
+  move_file: "Moving files…",
   read_google_doc: "Reading the Google doc…",
   web_search: "Searching the web…",
   web_fetch: "Reading the page…",
@@ -575,6 +622,16 @@ const TOOLS: BetaTool[] = [
   }),
   tool("read_file", "Read a text or markdown file from the project folder.", {
     path: { type: "string", description: "Path relative to the project folder, as listed." },
+  }),
+  tool("list_files", "List folders and files in the project folder (or a subfolder), with size and date.", {
+    path: { type: "string", description: "Folder relative to the project folder; empty string for the whole project." },
+  }),
+  tool("create_folder", "Create a folder (and any missing parent folders) inside the project folder.", {
+    path: { type: "string", description: "New folder path relative to the project folder, e.g. Photos/Mitte." },
+  }),
+  tool("move_file", "Move or rename a file or folder within the project folder. If 'to' is an existing folder, the item moves into it keeping its name. Never overwrites.", {
+    from: { type: "string", description: "Current path relative to the project folder, e.g. Attachments/IMG_2041.jpg." },
+    to: { type: "string", description: "New path relative to the project folder, e.g. Photos/Mitte/kitchen.jpg, or an existing folder." },
   }),
   tool("search_chat", "Search the full chat history of this project.", {
     query: { type: "string", description: "Words to look for." },
