@@ -163,6 +163,21 @@ export default class ClearDesk extends Plugin {
     this.register(() => {
       fm.getNewFileParent = original;
     });
+
+    // The explorer's "New folder" button skips getNewFileParent and asks Obsidian's
+    // (internal) createNewFolder for a folder at the root; send it to the project instead.
+    const internal = fm as unknown as { createNewFolder?: (parent: TFolder | null) => Promise<TFolder> };
+    const originalFolder = internal.createNewFolder;
+    if (typeof originalFolder !== "function") return;
+    internal.createNewFolder = (parent: TFolder | null) => {
+      const p = this.active();
+      const atRoot = !parent || parent.isRoot();
+      const project = p && !p.home && this.settings.explorerScope ? this.app.vault.getAbstractFileByPath(p.folder) : null;
+      return originalFolder.call(fm, atRoot && project instanceof TFolder ? project : parent);
+    };
+    this.register(() => {
+      internal.createNewFolder = originalFolder;
+    });
   }
 
   private scopeEl: HTMLStyleElement | null = null;
