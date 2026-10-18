@@ -16,6 +16,7 @@ const store: any = {
     const e = { id: `m-${chat.length}`, datetime: "2026-10-17 23:00", kind, tag: "", body, meta: {} }; chat.push(e); return e;
   },
   file: (p: string) => (files.has(p) ? mkFile(p) : null),
+  resolveLink: (p: string) => (files.has(p) ? mkFile(p) : null),
   readBinary: async (f: any) => files.get(f.path)!.buffer,
   read: async (p: string) => new TextDecoder().decode(files.get(p)!),
   readMeta: async () => ({ color: "", goal: "", status: "", order: 0, key_facts: [] }),
