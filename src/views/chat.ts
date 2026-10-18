@@ -1,4 +1,4 @@
-import { Component, ItemView, MarkdownRenderer, Platform, Scope, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Scope, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import type ClearDesk from "../main";
 import { Entry, fullDateLabel, isoDate, isoDateTime, queryWords, snippetParts, splitEmbeds, updatedLabel, whenLabel } from "../format";
 import { CommandKind, blockOpener, closeBlock } from "../input";
@@ -126,36 +126,7 @@ export class ChatView extends ItemView {
     );
     this.addChild(this.md);
     this.renderPendingFiles();
-    if (Platform.isMobile) this.watchBottomInset();
     await this.reload(true);
-  }
-
-  /**
-   * On phones, Obsidian's bottom bar (and iOS's floating bar) can sit over the
-   * chat. Measure how much of the view it covers and lift the input above it.
-   */
-  private watchBottomInset() {
-    const update = () => {
-      const view = this.contentEl.getBoundingClientRect();
-      let covered = 0;
-      document.querySelectorAll<HTMLElement>(".mobile-navbar, .mobile-toolbar").forEach((bar) => {
-        const r = bar.getBoundingClientRect();
-        const visible = r.height > 0 && getComputedStyle(bar).display !== "none" && getComputedStyle(bar).visibility !== "hidden";
-        if (visible && r.top < view.bottom && r.bottom > view.bottom - 200) covered = Math.max(covered, view.bottom - r.top);
-      });
-      // With the keyboard open, the visible area ends above the view's bottom.
-      const vv = window.visualViewport;
-      if (vv) covered = Math.max(covered, view.bottom - (vv.offsetTop + vv.height));
-      this.contentEl.style.setProperty("--cd-bottom-inset", `${Math.max(0, Math.round(covered))}px`);
-    };
-    const soon = () => window.requestAnimationFrame(update);
-    this.registerDomEvent(window, "resize", soon);
-    if (window.visualViewport) this.registerDomEvent(window.visualViewport as unknown as Window, "resize", soon);
-    this.registerEvent(this.app.workspace.on("layout-change", soon));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", soon));
-    // bars animate in and out without resize events; a light re-check catches that
-    this.registerInterval(window.setInterval(update, 1500));
-    soon();
   }
 
   // ---------- rendering ----------
