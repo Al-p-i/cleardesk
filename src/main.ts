@@ -112,6 +112,7 @@ export default class ClearDesk extends Plugin {
     // keep relative "updated" labels fresh
     this.registerInterval(window.setInterval(() => this.events.trigger("tick"), 60_000));
     this.applyBodyClasses();
+    this.newNotesInProject();
 
     this.app.workspace.onLayoutReady(async () => {
       await this.ensureHome();
@@ -141,6 +142,27 @@ export default class ClearDesk extends Plugin {
     b.removeClass("cd-size-compact", "cd-size-roomy", "cd-font-text");
     if (this.settings.textSize !== "default") b.addClass(`cd-size-${this.settings.textSize}`);
     if (this.settings.font === "text") b.addClass("cd-font-text");
+  }
+
+  /**
+   * While a project is open (and the explorer shows only that project), new
+   * notes go into the project folder instead of Obsidian's default location.
+   * Restored when the plugin unloads.
+   */
+  private newNotesInProject() {
+    const fm = this.app.fileManager;
+    const original = fm.getNewFileParent;
+    fm.getNewFileParent = (sourcePath: string, newFilePath?: string) => {
+      const parent = original.call(fm, sourcePath, newFilePath);
+      const p = this.active();
+      if (!this.settings.explorerScope || !p || p.home) return parent;
+      if (parent.path === p.folder || parent.path.startsWith(p.folder + "/")) return parent; // already inside
+      const folder = this.app.vault.getAbstractFileByPath(p.folder);
+      return folder instanceof TFolder ? folder : parent;
+    };
+    this.register(() => {
+      fm.getNewFileParent = original;
+    });
   }
 
   private scopeEl: HTMLStyleElement | null = null;

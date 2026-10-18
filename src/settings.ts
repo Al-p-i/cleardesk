@@ -123,7 +123,7 @@ export class ClearDeskSettingTab extends PluginSettingTab {
     new Setting(containerEl).setHeading().setName("Layout");
     new Setting(containerEl)
       .setName("File explorer shows only the current project")
-      .setDesc("Hides the rest of the vault while you work in a project. Search and the quick switcher still find everything. Also available as the command \"Toggle whole vault in file explorer\".")
+      .setDesc("Hides the rest of the vault while you work in a project, and new notes are created in the project's folder. Search and the quick switcher still find everything. Also available as the command \"Toggle whole vault in file explorer\".")
       .addToggle((t) =>
         t.setValue(s.explorerScope).onChange(async (v) => {
           s.explorerScope = v;
