@@ -230,7 +230,12 @@ export default class ClearDesk extends Plugin {
     for (const p of [path, oldPath]) {
       if (!p) continue;
       const m = /^(.+)\/_project\/(project|tasks|notes)\.md$/.exec(p);
-      if (m) {
+      const chat = /^(.+)\/_project\/chat\/[^/]+\.md$/.exec(p);
+      if (chat) {
+        // Chat files also change by sync (e.g. messages sent from your phone): reload the chat.
+        this.refreshSoon();
+        this.chatChanged(chat[1]);
+      } else if (m) {
         this.refreshSoon();
         if (m[2] !== "project") this.dataChanged(m[1]);
       } else if (p.endsWith("/_project") || /\/_project\/project\.md$/.test(p)) {
@@ -240,6 +245,17 @@ export default class ClearDesk extends Plugin {
         this.refreshSoon();
       }
     }
+  }
+
+  private chatSoon = new Map<string, () => void>();
+
+  private chatChanged(folder: string) {
+    let fn = this.chatSoon.get(folder);
+    if (!fn) {
+      fn = debounce(() => this.events.trigger("chat", folder), 300, true);
+      this.chatSoon.set(folder, fn);
+    }
+    fn();
   }
 
   private dataChanged(folder: string) {
