@@ -221,14 +221,10 @@ export class Controller {
       const tags = [...new Set(notes.map((n) => n.tag).filter(Boolean))];
       const meta = await this.store.readMeta(project.folder);
       const res = await this.ai.tagNote(body, { tags, goal: meta.goal, keyFacts: meta.key_facts });
-      await this.store.updateNote(project.folder, note.id, (e) => ({
-        ...e,
-        tag: res.tag.trim(),
-        meta: res.decision ? { ...e.meta, decision: "true" } : e.meta,
-      }), tx);
+      await this.store.updateNote(project.folder, note.id, (e) => ({ ...e, tag: res.tag.trim() }), tx);
       const facts = res.key_facts.filter((f) => f.label.trim() && f.value.trim()).slice(0, 3);
       for (const f of facts) await this.setKeyFact(project, f.label, f.value, tx);
-      const parts = ["✓ Note saved", res.tag && res.tag.trim(), res.decision && "decision", facts.length && "card updated"];
+      const parts = ["✓ Note saved", res.tag && res.tag.trim(), facts.length && "card updated"];
       await this.store.updateChat(project.folder, receipt.datetime.slice(0, 7), receipt.id, (e) => ({
         ...e,
         body: parts.filter(Boolean).join(" · "),

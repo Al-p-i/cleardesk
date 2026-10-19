@@ -97,7 +97,7 @@ export interface Entry {
 }
 
 const HEADING = /^### (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) · ([a-z]+)(?: · (.*?))? \^([a-z]+-[a-z0-9]+)\s*$/;
-const META = /^(source|replaced-by|decision|url|pinned):: (.*)$/;
+const META = /^(source|replaced-by|url|pinned):: (.*)$/;
 
 export function parseEntries(text: string): Entry[] {
   const entries: Entry[] = [];

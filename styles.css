@@ -151,8 +151,6 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-spacer { flex: 1; }
 .cd-source { cursor: pointer; display: inline-flex; color: var(--text-faint); }
 .cd-source:hover { color: var(--text-accent); }
-.cd-decision { display: inline-flex; }
-.cd-decision svg { width: 13px; height: 13px; }
 .cd-note .cd-icon-btn { visibility: hidden; }
 .cd-note:hover .cd-icon-btn, .cd-note.is-editing .cd-icon-btn { visibility: visible; }
 .cd-note.is-editing { border: 2px solid var(--cd-color); }

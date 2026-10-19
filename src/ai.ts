@@ -112,16 +112,15 @@ Weekday names mean the next such day after today (today's own weekday means 7 da
     return out.tasks;
   }
 
-  /** Pick a topic tag for a note, flag decisions, and suggest key-fact updates. */
+  /** Pick a topic tag for a note and suggest key-fact updates. */
   async tagNote(
     note: string,
     ctx: { tags: string[]; goal: string; keyFacts: { label: string; value: string }[] }
-  ): Promise<{ tag: string; decision: boolean; key_facts: { label: string; value: string }[] }> {
+  ): Promise<{ tag: string; key_facts: { label: string; value: string }[] }> {
     return this.json(
       `You file one note in a personal project workspace.
 Return:
 - tag: a 1-2 word topic for the note. Reuse an existing tag when one fits: ${ctx.tags.join(", ") || "(none yet)"}. Use "" only for notes with no clear topic.
-- decision: true only if the note records a decision the owner made.
 - key_facts: label/value pairs to set on the project card. Only include one when the note changes the value of a current key fact, or states a crucial constraint that clearly belongs on the card (budget, deadline, date, chosen option). Usually return [].
 Project goal: ${ctx.goal || "(not set)"}
 Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; ") || "(none)"}`,
@@ -130,7 +129,6 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
         type: "object",
         properties: {
           tag: { type: "string" },
-          decision: { type: "boolean" },
           key_facts: {
             type: "array",
             items: {
@@ -141,7 +139,7 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
             },
           },
         },
-        required: ["tag", "decision", "key_facts"],
+        required: ["tag", "key_facts"],
         additionalProperties: false,
       }
     );

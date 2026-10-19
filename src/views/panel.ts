@@ -325,10 +325,6 @@ export class PanelView extends ItemView {
     if (n.kind === "fact") meta.createSpan({ cls: "cd-muted", text: "AI" });
     if (n.meta.source) this.sourceLink(meta, n.meta.source);
     meta.createSpan("cd-spacer");
-    if (n.meta.decision === "true") {
-      const d = meta.createSpan({ cls: "cd-decision", attr: { "aria-label": "Decision" } });
-      setIcon(d, "gavel");
-    }
     if (n.tag) meta.createSpan({ cls: "cd-tag", text: n.tag });
     const pin = meta.createSpan({ cls: "cd-icon-btn cd-pin" + (pinned ? " is-on" : ""), attr: { "aria-label": pinned ? "Unpin" : "Pin to top" } });
     setIcon(pin, "pin");
