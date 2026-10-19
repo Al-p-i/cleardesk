@@ -7,7 +7,7 @@
 
 export type CommandKind = "task" | "note";
 
-export interface ParsedMessage {
+interface ParsedMessage {
   kind: CommandKind | "chat";
   /** task: one entry per task; note: a single entry; chat: a single entry */
   items: string[];

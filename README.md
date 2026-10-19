@@ -86,6 +86,11 @@ npm run test:ai      # fake-API tests of the Claude integration (no network, no 
 npm run typecheck
 ```
 
+Two manual helpers (not part of the test runs):
+
+- `npx tsx test/harness/repair-dryrun.ts <vault> <project>`: shows what "Repair broken attachment links" would do, read-only
+- `npx esbuild test/harness/google-live.ts --bundle --platform=node --format=esm --outfile=/tmp/g.mjs && node /tmp/g.mjs <google link>`: checks a real shared Google link (needs network)
+
 To copy a build into a vault for testing, put the plugin folder path in `.deploy-target` (git-ignored), or set `CLEARDESK_PLUGIN_DIR`, then:
 
 ```bash

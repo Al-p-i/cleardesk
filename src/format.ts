@@ -130,7 +130,7 @@ export function parseEntries(text: string): Entry[] {
   return entries;
 }
 
-export function serializeEntry(e: Entry): string {
+function serializeEntry(e: Entry): string {
   const tag = e.tag.replace(/[\^\n]/g, " ").trim();
   const head = `### ${e.datetime} · ${e.kind}${tag ? ` · ${tag}` : ""} ^${e.id}`;
   const meta = Object.entries(e.meta)
@@ -146,7 +146,7 @@ function preamble(text: string): string {
   return i === -1 ? text : lines.slice(0, i).join("\n");
 }
 
-export function serializeEntries(entries: Entry[], previousText = ""): string {
+function serializeEntries(entries: Entry[], previousText = ""): string {
   let head = preamble(previousText).replace(/\s+$/, "");
   head = head ? head + "\n\n" : "";
   return head + entries.map(serializeEntry).join("");

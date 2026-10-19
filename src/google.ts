@@ -2,7 +2,7 @@
 // content without JavaScript. Works for anything shared "Anyone with the link".
 // Pure functions, so they can be unit-tested.
 
-export interface GoogleExport {
+interface GoogleExport {
   kind: "doc" | "sheet" | "slides" | "file";
   id: string;
   url: string;

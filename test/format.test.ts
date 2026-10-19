@@ -383,3 +383,11 @@ test("AI memory: pinned and recent always, the rest on demand", () => {
   assert.ok(sameStatement("Deposit is 3x rent.", "deposit is 3x  rent"));
   assert.ok(!sameStatement("Deposit is 3x rent", "Deposit is 2x rent"));
 });
+
+import { filesSummary } from "../src/memory.ts";
+
+test("compact file summary for the AI", () => {
+  const paths = ["Attachments/a/1.jpg", "Attachments/a/2.jpg", "Attachments/b.mov", "lease.pdf", "Docs/plan.md", "zz.md"];
+  assert.deepEqual(filesSummary(paths), ["- Attachments/ (3 files)", "- Docs/ (1 file)", "- lease.pdf", "- zz.md"]);
+  assert.deepEqual(filesSummary(["a.md", "b.md", "c.md"], 2), ["- a.md", "- b.md", "- …and 1 more files"]);
+});

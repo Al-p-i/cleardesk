@@ -8,12 +8,12 @@ import {
 import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
 import { moveTarget, projectPath, relPath } from "./paths";
-import { noteLine, notesContext, sameStatement, searchNotes } from "./memory";
+import { filesSummary, noteLine, notesContext, sameStatement, searchNotes } from "./memory";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
 
-export type ChangeKind = "chat" | "data";
+type ChangeKind = "chat" | "data";
 
 export interface OldTodo { file: TFile; line: string; task: Task }
 
@@ -29,6 +29,12 @@ type FileBlock =
 
 const TEXT_TYPES = ["md", "txt", "csv", "json", "canvas", "tsv", "xml", "html", "yaml", "yml"];
 
+const isIsoDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** A response header, whatever its capitalisation. */
+const header = (headers: Record<string, string>, name: string) =>
+  Object.entries(headers).find(([k]) => k.toLowerCase() === name)?.[1] ?? "";
+
 /** Page title for a link, or "" if it can't be fetched within a few seconds. */
 async function fetchTitle(url: string): Promise<string> {
   try {
@@ -37,8 +43,7 @@ async function fetchTitle(url: string): Promise<string> {
       new Promise<null>((r) => window.setTimeout(() => r(null), 8000)),
     ]);
     if (!res || res.status >= 400) return "";
-    const ct = Object.entries(res.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
-    if (!/html/i.test(ct)) return "";
+    if (!/html/i.test(header(res.headers, "content-type"))) return "";
     return pageTitle(res.text.slice(0, 300000));
   } catch {
     return "";
@@ -200,10 +205,10 @@ export class Controller {
     const source = this.store.chatLink(project.folder, me);
     await this.store.addTasks(
       project.folder,
-      tasks.map((t) => ({ done: false, text: t.text, due: /^\d{4}-\d{2}-\d{2}$/.test(t.due) ? t.due : undefined, source })),
+      tasks.map((t) => ({ done: false, text: t.text, due: isIsoDate(t.due) ? t.due : undefined, source })),
       tx
     );
-    const dates = tasks.map((t) => (/^\d{4}-\d{2}-\d{2}$/.test(t.due) ? dueLabel(t.due) : "–"));
+    const dates = tasks.map((t) => (isIsoDate(t.due) ? dueLabel(t.due) : "–"));
     const what = tasks.length === 1 ? `Task added · ${tasks[0].text}` : `${tasks.length} tasks added`;
     const when = dates.every((d) => d === "–") ? "" : ` · ${dates.join(" · ")}`;
     await this.receipt(project, `✓ ${what}${when}`, tx);
@@ -310,7 +315,7 @@ export class Controller {
           return "Removed.";
         }
         case "add_task": {
-          const due = /^\d{4}-\d{2}-\d{2}$/.test(s("due")) ? s("due") : undefined;
+          const due = isIsoDate(s("due")) ? s("due") : undefined;
           await this.store.addTasks(project.folder, [{ done: false, text: s("text"), due, source }], tx);
           receipts.push(`✓ Task added · ${s("text")}${due ? ` · ${dueLabel(due)}` : ""}`);
           return "Task added.";
@@ -364,7 +369,7 @@ export class Controller {
           const notShared =
             "Google wouldn't share this file without a sign-in. It needs to be shared as \"Anyone with the link can view\" (Share → General access), or downloaded into the project folder.";
           const res = await requestUrl({ url: ex.url, throw: false });
-          const ct = Object.entries(res.headers).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
+          const ct = header(res.headers, "content-type");
           if ([401, 403, 404].includes(res.status)) return notShared;
           if (res.status >= 400) return `Google returned an error (${res.status}).`;
           if (ex.kind === "file" && /application\/pdf/i.test(ct)) {
@@ -472,10 +477,7 @@ export class Controller {
     const olderLine = mem.older
       ? `\n${mem.older} older notes/facts/links are not shown here. Use search_notes to find them (by words, #tag or kind).`
       : "";
-    const files = this.store
-      .projectFiles(project.folder)
-      .slice(0, 200)
-      .map((f) => `- ${f.path.slice(project.folder.length + 1)}`);
+    const files = filesSummary(this.store.projectFiles(project.folder).map((f) => relPath(project.folder, f.path)));
     const facts = meta.key_facts.map((f: KeyFact) => `- ${f.label}: ${f.value}`);
     const today = new Date();
     const text = `Today is ${today.toDateString()} (${isoDate(today)}).
@@ -497,7 +499,7 @@ Topics in this project's notes: ${tagLine || "(none yet)"}
 Notes (owner's words), facts (extracted by you) and saved links: pinned items (the ones the owner marked as most important) and the most recent ones:
 ${noteLines.join("\n") || "(none)"}${olderLine}
 
-Files in the project folder:
+Files in the project folder (overview; use list_files for details):
 ${files.join("\n") || "(none)"}
 </project>`;
     return { text, taskById };

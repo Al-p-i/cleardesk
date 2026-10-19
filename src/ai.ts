@@ -284,7 +284,7 @@ Do your calculations first; then output only the finished document, with no comm
 }
 
 /** Text after the last non-text block (tool calls and their results), or all text if none. */
-export function documentText(content: { type: string; text?: string }[]): string {
+function documentText(content: { type: string; text?: string }[]): string {
   let last = -1;
   content.forEach((b, i) => {
     if (b.type !== "text") last = i;

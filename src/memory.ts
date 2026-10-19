@@ -4,9 +4,9 @@
 
 import { Entry, matchesAll, queryWords } from "./format";
 
-export const RECENT_NOTES = 30;
+const RECENT_NOTES = 30;
 
-export interface NotesContext {
+interface NotesContext {
   /** pinned first, then the most recent, oldest first within each group */
   shown: Entry[];
   /** how many current (not replaced) items are left out */
@@ -63,4 +63,25 @@ export function searchNotes(entries: Entry[], query: string, tag = "", kind = ""
 export function sameStatement(a: string, b: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return norm(a) === norm(b);
+}
+
+/**
+ * A short overview of the project's files for the AI: top-level folders with
+ * how many files they hold, plus loose top-level files. The AI lists details
+ * with list_files when it needs them.
+ */
+export function filesSummary(relPaths: string[], maxLoose = 20): string[] {
+  const folders = new Map<string, number>();
+  const loose: string[] = [];
+  for (const p of relPaths) {
+    const i = p.indexOf("/");
+    if (i === -1) loose.push(p);
+    else folders.set(p.slice(0, i), (folders.get(p.slice(0, i)) ?? 0) + 1);
+  }
+  const lines = [...folders.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([f, n]) => `- ${f}/ (${n} file${n === 1 ? "" : "s"})`);
+  lines.push(...loose.sort().slice(0, maxLoose).map((f) => `- ${f}`));
+  if (loose.length > maxLoose) lines.push(`- …and ${loose.length - maxLoose} more files`);
+  return lines;
 }
