@@ -43,6 +43,8 @@ const ai: any = {
   configured: true, webAccess: false,
   chat: async ({ exec }: any) => {
     results.list = await exec("list_files", { path: "" });
+    results.readEscape = await exec("read_file", { path: "../1. PERSONAL/secret.md" });
+    results.readSystem = await exec("read_file", { path: "_project/chat/2026-10.md" });
     results.photo = await exec("move_file", { from: "Attachments/IMG_2041.jpg", to: "Photos/Mitte/kitchen.jpg" });
     results.folder = await exec("create_folder", { path: "Docs" });
     results.intoFolder = await exec("move_file", { from: "Attachments/lease.pdf", to: "Docs" });
@@ -67,6 +69,8 @@ assert.ok(!results.list.includes("_project"), "listing hides _project");
 assert.ok(items.has("APARTMENTS/Photos/Mitte/kitchen.jpg") && !items.has("APARTMENTS/Attachments/IMG_2041.jpg"));
 assert.ok(items.has("APARTMENTS/Docs/lease.pdf"), "moving into an existing folder keeps the name");
 assert.match(results.escape, /outside the project/);
+assert.match(results.readEscape, /outside the project/, "read_file uses the same path rules");
+assert.match(results.readSystem, /_project/);
 assert.ok(items.has("1. PERSONAL/secret.md"));
 assert.match(results.system, /_project/);
 assert.ok(items.has("APARTMENTS/_project/chat/2026-10.md"));

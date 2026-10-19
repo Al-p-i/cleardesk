@@ -54,6 +54,16 @@ assert.equal(sent.user[0].source.media_type, "image/jpeg");
 assert.match(sent.user[1].text, /^\(See the attached file\.\)/);
 console.log("image-only message ok");
 
+// ---- a text attachment that was moved is still read from its new place ----
+files.set("APARTMENTS/Docs/costs.csv", csv);
+const origResolve = store.resolveLink;
+store.resolveLink = (p: string) => (p === "APARTMENTS/Attachments/old-costs.csv" ? mkFile("APARTMENTS/Docs/costs.csv") : origResolve(p));
+chat.length = 0;
+chat.push({ id: "m-x", datetime: "2026-10-17 23:00", kind: "me", tag: "", body: "see ![[APARTMENTS/Attachments/old-costs.csv]]", meta: {} });
+const userBlocks = await (c as any).userContent(project, "see\n![[APARTMENTS/Attachments/old-costs.csv]]");
+assert.match(userBlocks[0].text, /^Attached file Docs\/costs\.csv:\n\nrent,1380/);
+console.log("moved text attachment ok");
+
 // ---- links: saved with page title, deduplicated, tagged ----
 import { script } from "./obsidian-stub";
 (globalThis as any).window = { setTimeout };

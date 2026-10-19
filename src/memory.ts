@@ -50,11 +50,11 @@ export function searchNotes(entries: Entry[], query: string, tag = "", kind = ""
   const words = queryWords(query);
   const t = tag.trim().toLowerCase().replace(/^#/, "").replace(/-/g, " ");
   const k = kind.trim().toLowerCase();
+  if (!words.length && !t && !k) return []; // never "everything"
   return entries
     .filter((e) => !k || e.kind === k)
     .filter((e) => !t || e.tag.toLowerCase() === t)
     .filter((e) => !words.length || matchesAll(`${e.body} ${e.tag} ${e.meta.url ?? ""}`, words))
-    .filter((e) => words.length || t || k) // never "everything"
     .sort((a, b) => b.datetime.localeCompare(a.datetime))
     .slice(0, limit);
 }

@@ -3,7 +3,7 @@ import { TFile, arrayBufferToBase64, requestUrl } from "obsidian";
 import { cleanExport, googleExportUrl, looksLikeLoginPage } from "./google";
 import { Ai, ToolOutput, keyProblem } from "./ai";
 import {
-  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, splitEmbeds, splitUrls, withEmbeds,
+  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, splitEmbeds, splitUrls, withEmbeds,
 } from "./format";
 import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
@@ -21,6 +21,11 @@ export interface OldTodo { file: TFile; line: string; task: Task }
 export interface Upload { name: string; data: ArrayBuffer }
 
 type ContentBlock = Anthropic.Beta.Messages.BetaContentBlockParam;
+/** Blocks that work both in a message and in a tool result. */
+type FileBlock =
+  | Anthropic.Beta.Messages.BetaTextBlockParam
+  | Anthropic.Beta.Messages.BetaImageBlockParam
+  | Anthropic.Beta.Messages.BetaRequestDocumentBlock;
 
 const TEXT_TYPES = ["md", "txt", "csv", "json", "canvas", "tsv", "xml", "html", "yaml", "yml"];
 
@@ -102,7 +107,7 @@ export class Controller {
     this.captureLinks(project, me, raw).catch((e) => console.warn("ClearDesk: saving links failed", e));
     try {
       if (parsed.kind === "task" && parsed.items.length) await this.addTasks(project, me, parsed.items);
-      else if (parsed.kind === "note") await this.addNote(project, me, withEmbeds(parsed.items[0] ?? "", files));
+      else if (parsed.kind === "note") await this.addNote(project, withEmbeds(parsed.items[0] ?? "", files));
       else await this.chat(project, me);
     } catch (e) {
       await this.error(project, e);
@@ -142,6 +147,28 @@ export class Controller {
     this.emit("data", project.folder);
   }
 
+  /** A file as the model can read it: image, PDF, text, or a short note why not. Used for attachments and read_file. */
+  private async fileContent(f: TFile, label: string): Promise<FileBlock[]> {
+    const ext = f.extension.toLowerCase();
+    const size = f.stat.size;
+    if (IMAGE_TYPES[ext]) {
+      if (size > 5 * 1024 * 1024) return [{ type: "text", text: `(${label} is an image over 5 MB, too large to view.)` }];
+      const data = arrayBufferToBase64(await this.store.readBinary(f));
+      return [{ type: "image", source: { type: "base64", media_type: IMAGE_TYPES[ext], data } }];
+    }
+    if (ext === "pdf") {
+      if (size > 20 * 1024 * 1024) return [{ type: "text", text: `(${label} is a PDF over 20 MB, too large to read.)` }];
+      const data = arrayBufferToBase64(await this.store.readBinary(f));
+      return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data }, title: f.name }];
+    }
+    if (TEXT_TYPES.includes(ext)) {
+      const text = await this.store.read(f.path);
+      const body = text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
+      return [{ type: "text", text: `${label}:\n\n${body}` }];
+    }
+    return [{ type: "text", text: `(${label}: .${ext} files can't be read. Text, markdown, CSV, PDF and images work.)` }];
+  }
+
   /** Message content for the model: attached files first, then the text. */
   private async userContent(project: Project, body: string): Promise<string | ContentBlock[]> {
     const { text, files } = splitEmbeds(body);
@@ -150,24 +177,10 @@ export class Controller {
     const names: string[] = [];
     for (const path of files) {
       const f = this.store.resolveLink(path, `${project.folder}/_project/chat/x.md`);
-      const rel = path.startsWith(project.folder + "/") ? path.slice(project.folder.length + 1) : path;
+      const rel = relPath(project.folder, f?.path ?? path);
       names.push(rel);
-      if (!f) {
-        blocks.push({ type: "text", text: `(Attached file ${rel} is missing.)` });
-        continue;
-      }
-      const ext = f.extension.toLowerCase();
-      if (IMAGE_TYPES[ext] && f.stat.size <= 5 * 1024 * 1024) {
-        const data = arrayBufferToBase64(await this.store.readBinary(f));
-        blocks.push({ type: "image", source: { type: "base64", media_type: IMAGE_TYPES[ext], data } });
-      } else if (ext === "pdf" && f.stat.size <= 20 * 1024 * 1024) {
-        const data = arrayBufferToBase64(await this.store.readBinary(f));
-        blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data }, title: f.name });
-      } else if (TEXT_TYPES.includes(ext) && f.stat.size <= 400 * 1024) {
-        blocks.push({ type: "text", text: `Attached file ${rel}:\n\n${await this.store.read(path)}` });
-      } else {
-        blocks.push({ type: "text", text: `(Attached file ${rel}: .${ext} files can't be read, or it's too large.)` });
-      }
+      if (f) blocks.push(...(await this.fileContent(f, `Attached file ${rel}`)));
+      else blocks.push({ type: "text", text: `(Attached file ${rel} is no longer in the vault.)` });
     }
     blocks.push({ type: "text", text: `${text || "(See the attached file.)"}\n\n[Attached: ${names.join(", ")}. Saved in the project folder.]` });
     return blocks;
@@ -197,7 +210,7 @@ export class Controller {
     this.emit("data", project.folder);
   }
 
-  private async addNote(project: Project, me: Entry, body: string) {
+  private async addNote(project: Project, body: string) {
     const tx = new Tx();
     const note = await this.store.addNote(project.folder, { kind: "note", tag: "", body, meta: {} }, tx);
     this.emit("data", project.folder);
@@ -314,20 +327,11 @@ export class Controller {
           return "Marked done.";
         }
         case "read_file": {
-          const path = `${project.folder}/${s("path").replace(/^\/+/, "")}`;
-          const f = this.store.file(path);
-          if (!f || !path.startsWith(project.folder + "/")) return "File not found in this project.";
-          const ext = f.extension.toLowerCase();
-          if (ext === "pdf" || IMAGE_TYPES[ext]) {
-            if (f.stat.size > 20 * 1024 * 1024) return "That file is over 20 MB, too large to read.";
-            const data = arrayBufferToBase64(await this.store.readBinary(f));
-            return ext === "pdf"
-              ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data }, title: f.name }]
-              : [{ type: "image", source: { type: "base64", media_type: IMAGE_TYPES[ext], data } }];
-          }
-          if (!["md", "txt", "csv", "json", "canvas"].includes(ext)) return `Can't read .${ext} files. Text, markdown, PDF and images work.`;
-          const text = await this.store.read(path);
-          return text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
+          const at = projectPath(project.folder, s("path"));
+          if ("error" in at) return at.error;
+          const f = this.store.file(at.path);
+          if (!f) return "File not found in this project.";
+          return this.fileContent(f, relPath(project.folder, f.path));
         }
         case "search_notes": {
           const hits = searchNotes(await this.store.notes(project.folder), s("query"), s("tag"), s("kind"));
@@ -382,17 +386,11 @@ export class Controller {
           return head + (body.length > 150000 ? body.slice(0, 150000) + "\n…(truncated)" : body);
         }
         case "search_chat": {
-          const words = s("query").toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-          const hits: string[] = [];
-          for (const m of this.store.chatMonths(project.folder).reverse()) {
-            for (const e of (await this.store.chat(project.folder, m)).reverse()) {
-              const body = e.body.toLowerCase();
-              if (e.kind !== "receipt" && words.some((w) => body.includes(w))) hits.push(`${e.datetime} ${e.kind}: ${e.body.slice(0, 400)}`);
-              if (hits.length >= 25) break;
-            }
-            if (hits.length >= 25) break;
-          }
-          return hits.length ? hits.join("\n") : "Nothing found.";
+          // Same search as the chat's search bar: every word must appear.
+          const hits = await this.store.searchChat([project.folder], queryWords(s("query")), 25);
+          return hits.length
+            ? hits.map(({ entry: e }) => `${e.datetime} ${e.kind === "me" ? "owner" : "you"}: ${e.body.slice(0, 400)}`).join("\n")
+            : "Nothing found. Try fewer or different words.";
         }
         case "create_document": {
           const md = await this.ai.writeDocument(s("title"), s("brief"), ctx.text);
@@ -634,7 +632,7 @@ const TOOLS: BetaTool[] = [
   tool("complete_task", "Mark an open task as done.", {
     task_id: { type: "string", description: "Id from the open task list, e.g. t-abc123 or x-3." },
   }),
-  tool("read_file", "Read a text or markdown file from the project folder.", {
+  tool("read_file", "Read a file from the project folder: text, markdown, CSV, PDF or image.", {
     path: { type: "string", description: "Path relative to the project folder, as listed." },
   }),
   tool("list_files", "List folders and files in the project folder (or a subfolder), with size and date.", {
@@ -652,8 +650,8 @@ const TOOLS: BetaTool[] = [
     tag: { type: "string", description: "Topic tag to filter by (e.g. Mitte), or empty string." },
     kind: { type: "string", description: "note, fact or link to filter by, or empty string for all." },
   }),
-  tool("search_chat", "Search the full chat history of this project.", {
-    query: { type: "string", description: "Words to look for." },
+  tool("search_chat", "Search the full chat history of this project. Every word must appear in a message.", {
+    query: { type: "string", description: "A few distinctive words to look for." },
   }),
   tool("create_document", "Write a new markdown document into the project folder. Takes up to a minute.", {
     title: { type: "string", description: "Document title, also the file name." },
