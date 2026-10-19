@@ -190,41 +190,27 @@ export class PanelView extends ItemView {
   }
 
   private editTask(row: HTMLElement, p: ProjectState, t: Task) {
-    this.editing = true;
     row.empty();
     row.addClass("is-editing");
     const input = row.createEl("input", { type: "text", value: t.text, cls: "cd-edit" });
     const date = row.createEl("input", { type: "date", value: t.due ?? "", cls: "cd-date" });
-    const trash = row.createSpan({ cls: "cd-icon-btn", attr: { "aria-label": "Delete task" } });
-    setIcon(trash, "trash-2");
-    let finished = false;
-    const finish = async (save: boolean) => {
-      if (finished) return;
-      finished = true;
-      if (save && (input.value.trim() !== t.text || (date.value || undefined) !== t.due)) {
+    const edit = this.editSession(
+      row,
+      async () => {
+        if (input.value.trim() === t.text && (date.value || undefined) === t.due) return;
         await this.plugin.store.updateTask(p.folder, t, (x) => ({ ...x, text: input.value.trim() || x.text, due: date.value || undefined }));
-      }
-      this.doneEditing();
-      this.render();
-    };
-    trash.addEventListener("mousedown", async (ev) => {
-      ev.preventDefault();
-      finished = true;
-      await this.plugin.store.updateTask(p.folder, t, () => null);
-      this.doneEditing();
-      this.render();
-    });
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Enter") finish(true);
-      if (ev.key === "Escape") finish(false);
-    };
-    input.addEventListener("keydown", onKey);
-    date.addEventListener("keydown", onKey);
-    row.addEventListener("focusout", (ev) => {
-      if (!row.contains(ev.relatedTarget as Node)) finish(true);
-    });
+      },
+      { parent: row, label: "Delete task", run: () => this.plugin.store.updateTask(p.folder, t, () => null) }
+    );
+    for (const el of [input, date]) {
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") edit.save();
+        if (ev.key === "Escape") edit.cancel();
+      });
+    }
     input.focus();
   }
+
 
   // ---------- notes and facts ----------
 
@@ -360,7 +346,6 @@ export class PanelView extends ItemView {
   }
 
   private editNote(card: HTMLElement, p: ProjectState, n: Entry) {
-    this.editing = true;
     card.empty();
     card.addClass("is-editing");
     const ta = card.createEl("textarea", { cls: "cd-edit-area" });
@@ -369,36 +354,25 @@ export class PanelView extends ItemView {
     const bar = card.createDiv("cd-note-meta");
     bar.createSpan({ cls: "cd-muted", text: "⌘↵ save · Esc cancel" });
     bar.createSpan("cd-spacer");
-    const trash = bar.createSpan({ cls: "cd-icon-btn", attr: { "aria-label": "Delete" } });
-    setIcon(trash, "trash-2");
-    let finished = false;
-    const finish = async (save: boolean) => {
-      if (finished) return;
-      finished = true;
-      const text = ta.value.replace(/\s+$/, "");
-      if (save && text && text !== n.body) {
+    const edit = this.editSession(
+      card,
+      async () => {
+        const text = ta.value.replace(/\s+$/, "");
+        if (!text || text === n.body) return;
         // An edited fact becomes the owner's note: the AI won't touch it again.
         await this.plugin.store.updateNote(p.folder, n.id, (e) => ({ ...e, kind: e.kind === "fact" ? "note" : e.kind, body: text }));
-      }
-      this.doneEditing();
-      this.render();
-    };
-    trash.addEventListener("mousedown", async (ev) => {
-      ev.preventDefault();
-      finished = true;
-      await this.plugin.store.updateNote(p.folder, n.id, () => null);
-      this.doneEditing();
-      this.render();
-    });
+      },
+      { parent: bar, label: "Delete", run: () => this.plugin.store.updateNote(p.folder, n.id, () => null) }
+    );
     ta.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); finish(true); }
-      if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); edit.save(); }
+      if (ev.key === "Escape") { ev.preventDefault(); edit.cancel(); }
     });
     ta.addEventListener("input", size);
-    ta.addEventListener("blur", () => finish(true));
     ta.focus();
     size();
   }
+
 
   // ---------- drag to reorder ----------
 
@@ -480,22 +454,51 @@ export class PanelView extends ItemView {
   }
 
   private inlineInput(target: HTMLElement, value: string, placeholder: string, save: (v: string) => Promise<void>) {
-    this.editing = true;
     const input = createEl("input", { type: "text", cls: "cd-edit", value, attr: { placeholder } });
     target.replaceWith(input);
-    let finished = false;
-    const finish = async (ok: boolean) => {
-      if (finished) return;
-      finished = true;
-      if (ok && input.value.trim() !== value) await save(input.value.trim());
-      this.doneEditing();
-      this.render();
-    };
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") finish(true);
-      if (ev.key === "Escape") finish(false);
+    const edit = this.editSession(input, async () => {
+      if (input.value.trim() !== value) await save(input.value.trim());
     });
-    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") edit.save();
+      if (ev.key === "Escape") edit.cancel();
+    });
     input.focus();
   }
+
+  /**
+   * Shared lifecycle of every in-place edit: re-renders are held while editing;
+   * save() / leaving the fields saves, cancel() discards, and an optional trash
+   * button deletes. Each runs once, then the panel re-renders.
+   */
+  private editSession(
+    root: HTMLElement,
+    save: () => Promise<unknown>,
+    remove?: { parent: HTMLElement; label: string; run: () => Promise<unknown> }
+  ) {
+    this.editing = true;
+    let finished = false;
+    const end = async (action?: () => Promise<unknown>) => {
+      if (finished) return;
+      finished = true;
+      if (action) await action();
+      this.editing = false;
+      this.dirty = false;
+      this.render();
+    };
+    if (remove) {
+      const trash = remove.parent.createSpan({ cls: "cd-icon-btn", attr: { "aria-label": remove.label } });
+      setIcon(trash, "trash-2");
+      // mousedown + preventDefault keeps focus, so leaving the field doesn't save first
+      trash.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        end(remove.run);
+      });
+    }
+    root.addEventListener("focusout", (ev) => {
+      if (!root.contains(ev.relatedTarget as Node)) end(save);
+    });
+    return { save: () => end(save), cancel: () => end() };
+  }
+
 }
