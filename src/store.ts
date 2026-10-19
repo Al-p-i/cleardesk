@@ -8,8 +8,6 @@ import {
 export const SYSTEM_DIR = "_project";
 /** The default project: a general space for anything that isn't a project yet. */
 export const HOME = "Desk"; // default; the name is a setting
-/** Earlier name of the default project, migrated on load. */
-export const LEGACY_HOME = "Inbox";
 export const ATTACH_DIR = "Attachments";
 
 export const COLORS = [

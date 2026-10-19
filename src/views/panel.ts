@@ -315,7 +315,7 @@ export class PanelView extends ItemView {
       if (text) appendLinkified(body.createSpan("cd-note-text"), text);
       renderAttachments(this.app, card, files, {
         resolve: (l) => this.plugin.store.resolveLink(l, `${p.folder}/_project/notes.md`),
-        onMissing: (l) => this.plugin.heal(p.folder, l),
+        onMissing: (l) => this.plugin.links.heal(p.folder, l),
       });
     }
     if (replacedBy) body.createSpan({ cls: "cd-replaced-with", text: ` → ${replacedBy.body}` });

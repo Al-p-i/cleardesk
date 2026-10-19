@@ -246,7 +246,7 @@ export class ChatView extends ItemView {
     this.missingEl.hide();
     if (!this.missing) return;
     const folder = this.folder;
-    this.plugin.repairableCount(folder).then((n) => {
+    this.plugin.links.repairable(folder).then((n) => {
       if (!n || folder !== this.folder) return;
       this.missingEl.empty();
       this.missingEl.show();
@@ -310,7 +310,7 @@ export class ChatView extends ItemView {
         if (text) appendLinkified(el.createDiv("cd-msg-body"), text);
         this.missing += renderAttachments(this.app, el, files, {
           resolve: (l) => this.plugin.store.resolveLink(l, this.chatSource(e)),
-          onMissing: (l) => this.plugin.heal(this.folder, l),
+          onMissing: (l) => this.plugin.links.heal(this.folder, l),
         });
         if (/^\/[tn](\s|$)/.test(e.body)) el.addClass("is-command");
         copyText = text;

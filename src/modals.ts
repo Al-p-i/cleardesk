@@ -143,7 +143,7 @@ export class RepairModal extends Modal {
       s.addButton((b) =>
         b.setButtonText(`Repair ${count} link${count === 1 ? "" : "s"}`).setCta().onClick(async () => {
           b.setDisabled(true);
-          await this.plugin.applyRepairs(this.project.folder, repairs.flatMap((r) => r.pairs));
+          await this.plugin.links.apply(this.project.folder, repairs.flatMap((r) => r.pairs));
           new Notice(`Repaired ${count} attachment link${count === 1 ? "" : "s"}.`);
           this.close();
         })

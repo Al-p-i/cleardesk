@@ -3,13 +3,12 @@ import { Ai, AiSettings, DEFAULT_AI, keyProblem } from "./ai";
 import { Controller } from "./controller";
 import { taskCounts } from "./format";
 import { explorerScopeCss } from "./scope";
-import { COLORS, HOME, HOME_COLOR, LEGACY_HOME, Project, Store, isClosed } from "./store";
+import { COLORS, HOME, HOME_COLOR, Project, Store, isClosed } from "./store";
 import { CHAT_VIEW, ChatView } from "./views/chat";
 import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
 import { ImportModal, NewProjectModal, RepairModal } from "./modals";
-import { Candidate, MissingRef, fingerprint, fpOf, isRemoved, markRemoved, planRepairs, renameInIndex } from "./relink";
-import { splitEmbeds } from "./format";
+import { LinkKeeper } from "./linkkeeper";
 import { ClearDeskSettingTab } from "./settings";
 
 interface Settings extends AiSettings {
@@ -47,6 +46,7 @@ export default class ClearDesk extends Plugin {
   store!: Store;
   ai!: Ai;
   controller!: Controller;
+  links!: LinkKeeper;
   projects: ProjectState[] = [];
   /** "projects" | "active" | ("data" | "chat", folder) */
   events = new Events();
@@ -58,6 +58,7 @@ export default class ClearDesk extends Plugin {
     this.ai = new Ai(() => this.settings);
     this.controller = new Controller(this.store, this.ai, (kind, folder) => this.events.trigger(kind, folder));
     this.controller.onStream = (folder, text, status) => this.events.trigger("stream", folder, text, status);
+    this.links = new LinkKeeper(this.store, () => this.projects, this.events);
 
     this.registerView(PROJECTS_VIEW, (leaf) => new ProjectsView(leaf, this));
     this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
@@ -105,8 +106,8 @@ export default class ClearDesk extends Plugin {
       this.registerEvent(this.app.vault.on("create", onFile));
       this.registerEvent(this.app.vault.on("delete", onFile));
       this.registerEvent(this.app.vault.on("rename", onFile));
-      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => this.followRename(oldPath, f.path)));
-      this.registerEvent(this.app.vault.on("delete", (f) => this.followDelete(f.path)));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => this.links.followRename(oldPath, f.path)));
+      this.registerEvent(this.app.vault.on("delete", (f) => this.links.followDelete(f.path)));
       if (!this.settings.setupDone) {
         await this.openWorkspace();
         this.settings.setupDone = true;
@@ -199,24 +200,9 @@ export default class ClearDesk extends Plugin {
     return this.projects.find((p) => p.folder === this.settings.active) ?? this.projects[0] ?? null;
   }
 
-  /** Make sure the default project exists; renames an earlier "Inbox" project (links are updated). */
+  /** Make sure the default project exists. */
   async ensureHome() {
-    const vault = this.app.vault;
     const home = this.store.home;
-    const legacy = vault.getAbstractFileByPath(LEGACY_HOME);
-    if (
-      home !== LEGACY_HOME &&
-      legacy instanceof TFolder &&
-      this.store.file(`${LEGACY_HOME}/_project/project.md`) &&
-      !vault.getAbstractFileByPath(home)
-    ) {
-      await this.app.fileManager.renameFile(legacy, home);
-      if (this.settings.active === LEGACY_HOME) {
-        this.settings.active = home;
-        await this.saveSettings();
-      }
-      new Notice(`ClearDesk: Inbox is now called ${home}.`);
-    }
     if (!this.store.file(`${home}/_project/project.md`)) {
       await this.store.createProject(home, { color: HOME_COLOR, order: -1 });
     }
@@ -267,47 +253,34 @@ export default class ClearDesk extends Plugin {
   }
 
   private refreshSoon = debounce(() => this.refreshProjects(), 300, true);
-  private dataSoon = new Map<string, () => void>();
+  private soonFns = new Map<string, () => void>();
 
+  /** Trigger an event for a folder once a burst of file changes has settled. */
+  private soon(event: "chat" | "data", folder: string) {
+    const key = `${event}::${folder}`;
+    let fn = this.soonFns.get(key);
+    if (!fn) {
+      fn = debounce(() => this.events.trigger(event, folder), 250, true);
+      this.soonFns.set(key, fn);
+    }
+    fn();
+  }
+
+  /**
+   * Any change inside a project, or a new/renamed project, refreshes the project list (counts, "updated").
+   * Changes to tasks/notes refresh the panel; chat files reload the chat, which
+   * also covers messages that arrive by sync from another device.
+   */
   private onFileChange(path: string, oldPath?: string) {
     for (const p of [path, oldPath]) {
       if (!p) continue;
-      const m = /^(.+)\/_project\/(project|tasks|notes)\.md$/.exec(p);
-      const chat = /^(.+)\/_project\/chat\/[^/]+\.md$/.exec(p);
-      if (chat) {
-        // Chat files also change by sync (e.g. messages sent from your phone): reload the chat.
-        this.refreshSoon();
-        this.chatChanged(chat[1]);
-      } else if (m) {
-        this.refreshSoon();
-        if (m[2] !== "project") this.dataChanged(m[1]);
-      } else if (p.endsWith("/_project") || /\/_project\/project\.md$/.test(p)) {
-        this.refreshSoon();
-      } else if (this.projects.some((x) => p.startsWith(x.folder + "/"))) {
-        // chat, attachments, documents: refresh "last updated"
-        this.refreshSoon();
-      }
+      const known = this.projects.some((x) => p === x.folder || p.startsWith(x.folder + "/"));
+      if (!known && !/(^|\/)_project(\/|$)/.test(p)) continue; // new projects show up via their _project folder
+      this.refreshSoon();
+      const sys = /^(.+)\/_project\/(?:(tasks|notes)\.md|(chat)\/[^/]+\.md)$/.exec(p);
+      if (sys?.[2]) this.soon("data", sys[1]);
+      if (sys?.[3]) this.soon("chat", sys[1]);
     }
-  }
-
-  private chatSoon = new Map<string, () => void>();
-
-  private chatChanged(folder: string) {
-    let fn = this.chatSoon.get(folder);
-    if (!fn) {
-      fn = debounce(() => this.events.trigger("chat", folder), 300, true);
-      this.chatSoon.set(folder, fn);
-    }
-    fn();
-  }
-
-  private dataChanged(folder: string) {
-    let fn = this.dataSoon.get(folder);
-    if (!fn) {
-      fn = debounce(() => this.events.trigger("data", folder), 150, true);
-      this.dataSoon.set(folder, fn);
-    }
-    fn();
   }
 
   async setActive(folder: string) {
@@ -327,117 +300,17 @@ export default class ClearDesk extends Plugin {
     await this.refreshProjects();
   }
 
-  // ---------- attachment links ----------
-
-  private renameQueue: Promise<unknown> = Promise.resolve();
-
-  /** A file or folder moved inside Obsidian: point ClearDesk's links (and fingerprints) at the new place. */
-  private followRename(oldPath: string, newPath: string) {
-    if (/\/_project(\/|$)/.test(oldPath) || /\/_project(\/|$)/.test(newPath)) return;
-    this.renameQueue = this.renameQueue
-      .then(async () => {
-        for (const p of this.projects) {
-          await this.store.rewriteProjectLinks(p.folder, oldPath, newPath);
-          const ix = await this.store.readIndex(p.folder);
-          if (Object.keys(ix).some((k) => k === oldPath || k.startsWith(oldPath + "/"))) {
-            await this.store.writeIndex(p.folder, (cur) => renameInIndex(cur, oldPath, newPath));
-          }
-        }
-      })
-      .catch((e) => console.warn("ClearDesk: updating links after a move failed", e));
-  }
-
-  /** An attached file was deleted in Obsidian: remember it as removed, so it isn't reported as broken. */
-  private followDelete(path: string) {
-    if (/\/_project(\/|$)/.test(path)) return;
-    const p = this.projects.find((x) => path.startsWith(x.folder + "/"));
-    if (!p) return;
-    this.renameQueue = this.renameQueue
-      .then(async () => {
-        const ix = await this.store.readIndex(p.folder);
-        if (Object.keys(ix).some((k) => k === path || k.startsWith(path + "/"))) {
-          await this.store.writeIndex(p.folder, (cur) => markRemoved(cur, path));
-          this.events.trigger("chat", p.folder);
-        }
-      })
-      .catch((e) => console.warn("ClearDesk: noting a deleted attachment failed", e));
-  }
-
-  private healing = new Set<string>();
-
-  /** A link points nowhere: try to find the file by its fingerprint and fix the link. */
-  async heal(folder: string, link: string) {
-    const key = `${folder}::${link}`;
-    if (this.healing.has(key)) return;
-    this.healing.add(key);
-    const f = await this.store.findByFingerprint(folder, link);
-    if (!f) return;
-    await this.store.rewriteProjectLinks(folder, link, f.path);
-    // Found again, so it wasn't really removed (e.g. moved in Finder): keep a clean fingerprint.
-    await this.store.writeIndex(folder, (ix) => {
-      const next = renameInIndex(ix, link, f.path);
-      if (next[f.path]) next[f.path] = fpOf(next[f.path]);
-      return next;
-    });
-  }
-
-  /** Broken attachment links in a project: where they are and when they were sent. */
-  async findBrokenLinks(folder: string): Promise<{ missing: MissingRef[]; linked: Set<string> }> {
-    const missing: MissingRef[] = [];
-    const linked = new Set<string>();
-    const index = await this.store.readIndex(folder);
-    const scan = (entries: { datetime: string; body: string }[], source: string) => {
-      for (const e of entries) {
-        for (const link of splitEmbeds(e.body).files) {
-          const f = this.store.resolveLink(link, source);
-          if (f) linked.add(f.path);
-          else if (!isRemoved(index[link])) missing.push({ path: link, sent: e.datetime });
-        }
-      }
-    };
-    for (const m of this.store.chatMonths(folder)) scan(await this.store.chat(folder, m), `${folder}/_project/chat/${m}.md`);
-    scan(await this.store.notes(folder), `${folder}/_project/notes.md`);
-    return { missing, linked };
-  }
-
-  /** What a repair could do right now: matches for broken links (removed files excluded). */
-  async repairPlan(folder: string) {
-    const { missing, linked } = await this.findBrokenLinks(folder);
-    const candidates: Candidate[] = this.store
-      .projectFiles(folder)
-      .filter((f) => !linked.has(f.path) && f.extension !== "md")
-      .map((f) => ({ path: f.path, ctime: f.stat.ctime }));
-    return planRepairs(missing, candidates);
-  }
-
-  /** How many broken links a repair could fix (drives the chat's warning bar). */
-  async repairableCount(folder: string): Promise<number> {
-    const plan = await this.repairPlan(folder);
-    return plan.repairs.reduce((n, r) => n + r.pairs.length, 0);
-  }
+  // ---------- attachment links (see linkkeeper.ts) ----------
 
   async openRepair() {
     const p = this.active();
     if (!p) return;
-    const plan = await this.repairPlan(p.folder);
+    const plan = await this.links.plan(p.folder);
     if (!plan.repairs.length && !plan.unresolved.length) {
       new Notice("ClearDesk: all attachment links in this project work.");
       return;
     }
     new RepairModal(this, p, plan).open();
-  }
-
-  /** Apply repairs: rewrite links and record fingerprints so these files can be found again. */
-  async applyRepairs(folder: string, pairs: { from: string; to: string }[]) {
-    for (const { from, to } of pairs) await this.store.rewriteProjectLinks(folder, from, to);
-    const prints: Record<string, string> = {};
-    for (const { to } of pairs) {
-      const f = this.store.file(to);
-      if (f) prints[to] = fingerprint(await this.store.readBinary(f));
-    }
-    await this.store.writeIndex(folder, (ix) => ({ ...ix, ...prints }));
-    this.events.trigger("chat", folder);
-    this.events.trigger("data", folder);
   }
 
   nextColor(): string {
@@ -497,15 +370,9 @@ export default class ClearDesk extends Plugin {
       panel = ws.getRightLeaf(false) as WorkspaceLeaf;
       await panel.setViewState({ type: PANEL_VIEW, active: false });
     }
-    let chat = ws.getLeavesOfType(CHAT_VIEW)[0];
-    if (!chat) {
-      chat = ws.getLeaf("tab");
-      await chat.setViewState({ type: CHAT_VIEW, active: true });
-    }
     ws.revealLeaf(projects);
     ws.revealLeaf(panel);
-    ws.revealLeaf(chat);
-    ws.setActiveLeaf(chat, { focus: true });
+    await this.openChat();
     if (!this.ai.configured) new Notice(`ClearDesk: ${keyProblem(this.settings.apiKey)}`);
   }
 
