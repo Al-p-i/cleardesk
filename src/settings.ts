@@ -95,7 +95,7 @@ export class ClearDeskSettingTab extends PluginSettingTab {
     };
     new Setting(containerEl)
       .setName("Name")
-      .setDesc("The always-there project at the top of the list (Ctrl+0), for anything that isn't a project of its own. Renaming also renames its folder; links to it are updated.")
+      .setDesc("The always-there project at the top of the list, for anything that isn't a project of its own. Renaming also renames its folder; links to it are updated.")
       .addText((t) =>
         t.setPlaceholder("Desk").setValue(draft).onChange((v) => {
           draft = v;
@@ -122,12 +122,12 @@ export class ClearDeskSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setHeading().setName("Layout");
     new Setting(containerEl)
-      .setName("File explorer shows only the current project")
-      .setDesc("Hides the rest of the vault while you work in a project, and new notes are created in the project's folder. Search and the quick switcher still find everything. Also available as the command \"Toggle whole vault in file explorer\".")
+      .setName("Focus the file explorer on the current project")
+      .setDesc("Off by default. When on, while you're in a project (not Desk) the file explorer shows only that project's folder, opens it when you switch, and new notes and folders from the explorer are created inside it. Search and the quick switcher still find everything. Also available as the command \"Toggle file explorer focus on the current project\".")
       .addToggle((t) =>
         t.setValue(s.explorerScope).onChange(async (v) => {
           s.explorerScope = v;
-          this.plugin.applyExplorerScope();
+          this.plugin.applyExplorerFocus();
           await save();
         })
       );

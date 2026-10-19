@@ -40,8 +40,7 @@ export class ProjectsView extends ItemView {
     const closed = this.plugin.projects
       .filter((p) => isClosed(p.status))
       .sort((a, b) => b.updated - a.updated);
-    let n = 0;
-    for (const p of open) this.renderRow(list, p, p.home ? "0" : ++n <= 9 ? String(n) : "");
+    for (const p of open) this.renderRow(list, p);
     const add = list.createDiv("cd-project cd-new");
     setIcon(add.createSpan("cd-new-icon"), "plus");
     add.createSpan({ text: "New project" });
@@ -56,12 +55,12 @@ export class ProjectsView extends ItemView {
       // Keep the open project visible even when the group is folded.
       const active = this.plugin.active();
       for (const p of closed) {
-        if (this.showClosed || p.folder === active?.folder) this.renderRow(list, p, "");
+        if (this.showClosed || p.folder === active?.folder) this.renderRow(list, p);
       }
     }
   }
 
-  private renderRow(list: HTMLElement, p: ProjectState, key: string) {
+  private renderRow(list: HTMLElement, p: ProjectState) {
     const active = this.plugin.active();
     const closed = isClosed(p.status);
     const row = list.createDiv({ cls: "cd-project" + (p.folder === active?.folder ? " is-active" : "") + (closed ? " is-closed" : "") });
@@ -80,7 +79,6 @@ export class ProjectsView extends ItemView {
       badge.createSpan({ text: String(p.openTasks) });
     }
     if (p.updated) row.createSpan({ cls: "cd-updated", text: agoLabel(p.updated), attr: { "aria-label": updatedLabel(p.updated) } });
-    if (key) row.setAttr("aria-label", `Ctrl+${key}`);
     row.onClickEvent(() => this.plugin.setActive(p.folder));
     row.addEventListener("contextmenu", (ev) => this.menu(ev, p.folder));
   }

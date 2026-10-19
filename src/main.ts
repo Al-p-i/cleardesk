@@ -32,7 +32,7 @@ const DEFAULTS: Settings = {
   textSize: "default",
   font: "interface",
   homeName: HOME,
-  explorerScope: true,
+  explorerScope: false, // opt-in: it changes Obsidian's file explorer
 };
 
 export interface ProjectState extends Project {
@@ -68,12 +68,12 @@ export default class ClearDesk extends Plugin {
     this.addCommand({ id: "open-chat", name: "Open chat", callback: () => this.openChat() });
     this.addCommand({
       id: "toggle-explorer-scope",
-      name: "Toggle whole vault in file explorer",
+      name: "Toggle file explorer focus on the current project",
       callback: async () => {
         this.settings.explorerScope = !this.settings.explorerScope;
         await this.saveSettings();
-        this.applyExplorerScope();
-        new Notice(this.settings.explorerScope ? "File explorer: current project only" : "File explorer: whole vault");
+        this.applyExplorerFocus();
+        new Notice(this.settings.explorerScope ? "File explorer: focused on the current project" : "File explorer: whole vault");
       },
     });
     this.addCommand({ id: "new-project", name: "New project", callback: () => this.newProject() });
@@ -90,29 +90,12 @@ export default class ClearDesk extends Plugin {
         if (p) new ImportModal(this, p).open();
       },
     });
-    this.addCommand({
-      id: "switch-desk",
-      name: "Switch to default project",
-      hotkeys: [{ modifiers: ["Ctrl"], key: "0" }],
-      callback: () => this.setActive(this.store.home),
-    });
-    for (let i = 1; i <= 9; i++) {
-      this.addCommand({
-        id: `switch-${i}`,
-        name: `Switch to project ${i}`,
-        hotkeys: [{ modifiers: ["Ctrl"], key: String(i) }],
-        callback: () => {
-          const p = this.projects.filter((x) => !x.home && !isClosed(x.status))[i - 1];
-          if (p) this.setActive(p.folder);
-        },
-      });
-    }
-
     this.addSettingTab(new ClearDeskSettingTab(this.app, this));
     // keep relative "updated" labels fresh
     this.registerInterval(window.setInterval(() => this.events.trigger("tick"), 60_000));
     this.applyBodyClasses();
-    this.newNotesInProject();
+    this.syncExplorerHooks();
+    this.register(() => this.explorerHooks.splice(0).forEach((undo) => undo()));
 
     this.app.workspace.onLayoutReady(async () => {
       await this.ensureHome();
@@ -144,23 +127,31 @@ export default class ClearDesk extends Plugin {
     if (this.settings.font === "text") b.addClass("cd-font-text");
   }
 
+  /** Undo functions for the explorer hooks; empty while explorer focus is off. */
+  private explorerHooks: (() => void)[] = [];
+
   /**
-   * While a project is open (and the explorer shows only that project), new
-   * notes go into the project folder instead of Obsidian's default location.
-   * Restored when the plugin unloads.
+   * Explorer focus (opt-in): while a project is open, new notes and folders
+   * go into the project folder instead of Obsidian's default location. The
+   * hooks are only installed while the setting is on, and removed otherwise.
    */
-  private newNotesInProject() {
+  syncExplorerHooks() {
+    if (!this.settings.explorerScope) {
+      this.explorerHooks.splice(0).forEach((undo) => undo());
+      return;
+    }
+    if (this.explorerHooks.length) return;
     const fm = this.app.fileManager;
     const original = fm.getNewFileParent;
     fm.getNewFileParent = (sourcePath: string, newFilePath?: string) => {
       const parent = original.call(fm, sourcePath, newFilePath);
       const p = this.active();
-      if (!this.settings.explorerScope || !p || p.home) return parent;
+      if (!p || p.home) return parent;
       if (parent.path === p.folder || parent.path.startsWith(p.folder + "/")) return parent; // already inside
       const folder = this.app.vault.getAbstractFileByPath(p.folder);
       return folder instanceof TFolder ? folder : parent;
     };
-    this.register(() => {
+    this.explorerHooks.push(() => {
       fm.getNewFileParent = original;
     });
 
@@ -172,12 +163,18 @@ export default class ClearDesk extends Plugin {
     internal.createNewFolder = (parent: TFolder | null) => {
       const p = this.active();
       const atRoot = !parent || parent.isRoot();
-      const project = p && !p.home && this.settings.explorerScope ? this.app.vault.getAbstractFileByPath(p.folder) : null;
+      const project = p && !p.home ? this.app.vault.getAbstractFileByPath(p.folder) : null;
       return originalFolder.call(fm, atRoot && project instanceof TFolder ? project : parent);
     };
-    this.register(() => {
+    this.explorerHooks.push(() => {
       internal.createNewFolder = originalFolder;
     });
+  }
+
+  /** Apply the explorer focus setting: hooks plus the explorer filter. */
+  applyExplorerFocus() {
+    this.syncExplorerHooks();
+    this.applyExplorerScope();
   }
 
   private scopeEl: HTMLStyleElement | null = null;
@@ -319,7 +316,7 @@ export default class ClearDesk extends Plugin {
     await this.saveSettings();
     this.events.trigger("active");
     this.applyExplorerScope();
-    if (folder !== this.store.home) this.followExplorer(folder);
+    if (this.settings.explorerScope && folder !== this.store.home) this.followExplorer(folder);
     await this.openChat();
   }
 

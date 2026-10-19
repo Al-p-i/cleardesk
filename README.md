@@ -17,7 +17,7 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 
 ## Features
 
-- **Projects**: each project is a folder in your vault, with its own colour. Switch with a click or Ctrl+1…9; Ctrl+0 opens the default project (Desk). Mark projects as at risk, blocked, done or archived; done and archived ones fold away.
+- **Projects**: each project is a folder in your vault, with its own colour. Switch with a click; the default project (Desk) is always at the top. Mark projects as at risk, blocked, done or archived; done and archived ones fold away.
 - **Chat as the main interface**: ask questions about the project. Claude answers with the project's tasks, notes, facts and files in mind, and streams its reply.
 - **Quick capture**:
   - `/t call the agency fri`: a task, with the date understood
@@ -32,7 +32,7 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 - **File organising**: ask Claude to sort photos and files; it can list, create folders, and move or rename within the project folder only (never deleting, never overwriting, never touching `_project/`), with one-click undo.
 - **Links that survive moves**: attachment links follow files that are moved or renamed in Obsidian; a fingerprint of every attached file lets ClearDesk find it again even after moves elsewhere, and a repair command (with preview) fixes older broken links.
 - **Chat search** across one or all projects, with message times on hover.
-- **Focused file explorer**: the explorer shows only the current project's folder (the whole vault on Desk). Toggle it with a command.
+- **Focused file explorer** (optional, off by default): the explorer shows only the current project's folder (the whole vault on Desk), and new notes and folders go into the project.
 - Works on desktop and mobile; it only uses Obsidian's own APIs.
 
 ## Installation
@@ -43,6 +43,15 @@ ClearDesk isn't in the Obsidian community store yet.
 2. Put them in `<your vault>/.obsidian/plugins/cleardesk/`.
 3. In Obsidian: **Settings → Community plugins**, turn on **ClearDesk** (refresh the list if it doesn't show).
 4. **Settings → ClearDesk**: add your Anthropic API key (from [platform.claude.com](https://platform.claude.com)). `/t` and `/n` work without a key; chat needs one.
+
+## Network use, accounts and payment
+
+- **Account and payment:** the AI features need an Anthropic API key from [platform.claude.com](https://platform.claude.com). API usage is paid and billed by Anthropic per use. `/t` and `/n` capture, tasks, notes and the project panel work without a key.
+- **Network use:** ClearDesk connects to the internet only for these:
+  - **Anthropic's API** (`api.anthropic.com`) when you chat, use `/t` or `/n` with a key set, or ask for a document. Web searches and page reading requested by the AI run through Anthropic.
+  - **Google** (`docs.google.com`, `drive.google.com`) when the AI reads a Google Doc, Sheet, Slides deck or Drive file from a link you shared.
+  - **The pages you paste links to**, once each, to fetch their titles for saved links.
+- No telemetry, no analytics, and no other servers.
 
 ## Privacy and cost
 
