@@ -46,7 +46,7 @@ ClearDesk isn't in the Obsidian community store yet.
 
 ## Privacy and cost
 
-- When you chat, the current project's content (goal, key facts, tasks, notes, recent chat, file names, and any attachments you send) goes to Anthropic's API. Nothing is sent anywhere else, except fetching titles of links you paste and Google exports of links you ask about.
+- When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand. Nothing is sent anywhere else, except fetching titles of links you paste and Google exports of links you ask about.
 - Your API key is stored in the vault's plugin data (`.obsidian/plugins/cleardesk/data.json`). Don't commit or share that file.
 - API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
 

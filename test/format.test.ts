@@ -349,3 +349,37 @@ test("deleted attachments are marked, not forgotten", () => {
   assert.equal(fpOf("removed:10:aaaa"), "10:aaaa");
   assert.equal(fingerprintSize("removed:10:aaaa"), 10);
 });
+
+import { notesContext, noteLine, sameStatement, searchNotes } from "../src/memory.ts";
+
+test("AI memory: pinned and recent always, the rest on demand", () => {
+  const mk = (i: number, extra: Partial<Entry> = {}): Entry => ({
+    id: `n-${String(i).padStart(6, "0")}`, datetime: `2026-10-${String(1 + (i % 28)).padStart(2, "0")} 10:${String(i % 60).padStart(2, "0")}`,
+    kind: i % 3 === 0 ? "fact" : "note", tag: i % 2 ? "Mitte" : "Budget", body: `item ${i}`, meta: {}, ...extra,
+  });
+  const entries = Array.from({ length: 50 }, (_, i) => mk(i));
+  entries[3] = mk(3, { meta: { pinned: "true" } }); // old but pinned
+  entries[4] = mk(4, { meta: { "replaced-by": "f-x" } }); // replaced: never counted
+  const ctx = notesContext(entries, 10);
+  assert.equal(ctx.shown.length, 11);
+  assert.equal(ctx.shown[0].id, "n-000003", "pinned first");
+  assert.equal(ctx.older, 50 - 1 - 1 - 10);
+  assert.deepEqual(ctx.tags, [["Mitte", 25], ["Budget", 24]], "replaced items not counted");
+  assert.ok(!ctx.shown.some((e) => e.id === "n-000004"));
+  assert.equal(noteLine(entries[3]), "[n-000003] 2026-10-04 10:03 fact (pinned) #Mitte: item 3");
+
+  const notes: Entry[] = [
+    { id: "f-1", datetime: "2026-10-12 10:00", kind: "fact", tag: "Mitte", body: "Heating is from 1998", meta: {} },
+    { id: "n-2", datetime: "2026-10-14 10:00", kind: "note", tag: "Mitte", body: "old heating, ask about bills", meta: {} },
+    { id: "l-3", datetime: "2026-10-15 10:00", kind: "link", tag: "Kreuzberg", body: "2BR listing", meta: { url: "https://immo.example/kreuzberg-42" } },
+    { id: "f-4", datetime: "2026-10-10 10:00", kind: "fact", tag: "Budget", body: "Budget €1,400", meta: { "replaced-by": "f-5" } },
+  ];
+  assert.deepEqual(searchNotes(notes, "heating").map((e) => e.id), ["n-2", "f-1"], "newest first");
+  assert.deepEqual(searchNotes(notes, "heating", "", "fact").map((e) => e.id), ["f-1"]);
+  assert.deepEqual(searchNotes(notes, "", "#mitte").map((e) => e.id), ["n-2", "f-1"]);
+  assert.deepEqual(searchNotes(notes, "kreuzberg").map((e) => e.id), ["l-3"], "matches tag and URL");
+  assert.deepEqual(searchNotes(notes, "budget").map((e) => e.id), ["f-4"], "replaced facts are searchable");
+  assert.deepEqual(searchNotes(notes, ""), [], "never everything");
+  assert.ok(sameStatement("Deposit is 3x rent.", "deposit is 3x  rent"));
+  assert.ok(!sameStatement("Deposit is 3x rent", "Deposit is 2x rent"));
+});

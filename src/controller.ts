@@ -8,6 +8,7 @@ import {
 import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
 import { moveTarget, projectPath, relPath } from "./paths";
+import { noteLine, notesContext, sameStatement, searchNotes } from "./memory";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -265,6 +266,10 @@ export class Controller {
       const s = (k: string) => String(input[k] ?? "").trim();
       switch (name) {
         case "add_fact": {
+          const existing = (await this.store.notes(project.folder)).find(
+            (n) => !n.meta["replaced-by"] && (n.kind === "fact" || n.kind === "note") && sameStatement(n.body, s("text"))
+          );
+          if (existing) return `Already saved as ${existing.id}; nothing added.`;
           const f = await this.store.addNote(project.folder, { kind: "fact", tag: s("tag"), body: s("text"), meta: { source } }, tx);
           receipts.push(`✦ Fact saved${f.tag ? ` · ${f.tag}` : ""}`);
           return `Saved as ${f.id}.`;
@@ -323,6 +328,10 @@ export class Controller {
           if (!["md", "txt", "csv", "json", "canvas"].includes(ext)) return `Can't read .${ext} files. Text, markdown, PDF and images work.`;
           const text = await this.store.read(path);
           return text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
+        }
+        case "search_notes": {
+          const hits = searchNotes(await this.store.notes(project.folder), s("query"), s("tag"), s("kind"));
+          return hits.length ? hits.map(noteLine).join("\n") : "No matching notes, facts or links.";
         }
         case "list_files": {
           const at = projectPath(project.folder, s("path"));
@@ -462,12 +471,13 @@ export class Controller {
       return `- [${id}] ${plainLinks(t.text)}${t.due ? ` (due ${t.due})` : ""}`;
     });
     const done = tasks.filter((t) => t.done).slice(-8).map((t) => `- ${plainLinks(t.text)}${t.doneDate ? ` (done ${t.doneDate})` : ""}`);
-    const current = notes.filter((n) => !n.meta["replaced-by"]).slice(-150);
-    const noteLines = current.map(
-      (n) =>
-        `[${n.id}] ${n.datetime} ${n.kind}${n.meta.pinned === "true" ? " (pinned)" : ""}${n.tag ? ` #${n.tag.replace(/\s+/g, "-")}` : ""}: ${n.body.slice(0, 1500)}` +
-        (n.meta.url ? ` <${n.meta.url}>` : "")
-    );
+    // Pinned and recent items always; the rest is found with search_notes.
+    const mem = notesContext(notes);
+    const noteLines = mem.shown.map(noteLine);
+    const tagLine = mem.tags.map(([t, n]) => `#${t.replace(/\s+/g, "-")} (${n})`).join(", ");
+    const olderLine = mem.older
+      ? `\n${mem.older} older notes/facts/links are not shown here. Use search_notes to find them (by words, #tag or kind).`
+      : "";
     const files = this.store
       .projectFiles(project.folder)
       .slice(0, 200)
@@ -488,8 +498,10 @@ ${openLines.join("\n") || "(none)"}
 Recently done:
 ${done.join("\n") || "(none)"}
 
-Notes (owner's words), facts (extracted by you) and saved links, in the owner's order. Pinned items are the ones the owner marked as most important:
-${noteLines.join("\n") || "(none)"}
+Topics in this project's notes: ${tagLine || "(none yet)"}
+
+Notes (owner's words), facts (extracted by you) and saved links: pinned items (the ones the owner marked as most important) and the most recent ones:
+${noteLines.join("\n") || "(none)"}${olderLine}
 
 Files in the project folder:
 ${files.join("\n") || "(none)"}
@@ -541,7 +553,8 @@ const SYSTEM = `You are the assistant inside ClearDesk, a chat-first project wor
 How the workspace works:
 - Tasks: the owner adds them with /t or ticks them off in the side panel. Call add_task only when the owner explicitly asks you to add a task or remind them of something. When they say a task is done, call complete_task.
 - Notes are the owner's own words. You never change them.
-- Facts are short statements you extract from the chat. When the owner mentions something new and concrete about the project in passing (a price, a date, what someone said, a decision, a constraint), call add_fact once per fact, written as a short standalone sentence with a 1-2 word topic tag (reuse existing tags). Don't save questions, chit-chat, or things already recorded. When new information contradicts an existing fact, call replace_fact instead of add_fact.
+- Facts are short statements you extract from the chat, so they're remembered later. Save only what matters for decisions: prices and costs, dates and deadlines, decisions made, commitments (who will do what), constraints and requirements, and concrete answers from other people. Don't save passing remarks, opinions without consequence, questions, plans still being discussed, or anything already recorded. Call add_fact once per fact, as a short standalone sentence with a 1-2 word topic tag (reuse existing tags). When new information contradicts an existing fact, call replace_fact instead of add_fact; if that fact isn't shown, find it with search_notes first.
+- Memory: only pinned and recent notes/facts/links are shown below. When a question may involve something older (an earlier price, what someone said weeks ago, a past decision), call search_notes before answering rather than saying you don't know. search_chat finds things said in the chat itself.
 - Key facts are the 3-6 label/value pairs on the project card that shape decisions (budget, deadline, shortlist...). Call set_key_fact when one of them changes or a crucial new one appears. Keep labels to 1-2 words and values short.
 - The goal is written by the owner. Never change it. If something contradicts it, point that out in your reply.
 - Documents: when asked for a document (comparison, plan, calculation), call create_document with a precise, complete brief; it runs real code for calculations. Use read_file to read files in the project folder (text, markdown, PDF and images) and search_chat to find something said earlier that isn't in the recent conversation.
@@ -562,6 +575,7 @@ const WEB_TOOLS: Anthropic.Beta.Messages.BetaToolUnion[] = [
 ];
 
 const TOOL_STATUS: Record<string, string> = {
+  search_notes: "Searching notes…",
   list_files: "Looking at the files…",
   create_folder: "Creating a folder…",
   move_file: "Moving files…",
@@ -632,6 +646,11 @@ const TOOLS: BetaTool[] = [
   tool("move_file", "Move or rename a file or folder within the project folder. If 'to' is an existing folder, the item moves into it keeping its name. Never overwrites.", {
     from: { type: "string", description: "Current path relative to the project folder, e.g. Attachments/IMG_2041.jpg." },
     to: { type: "string", description: "New path relative to the project folder, e.g. Photos/Mitte/kitchen.jpg, or an existing folder." },
+  }),
+  tool("search_notes", "Search all of this project's notes, facts and saved links, including older ones not shown in the context. All words must match; tag and kind narrow it down.", {
+    query: { type: "string", description: "Words to look for; empty string to list everything with the given tag or kind." },
+    tag: { type: "string", description: "Topic tag to filter by (e.g. Mitte), or empty string." },
+    kind: { type: "string", description: "note, fact or link to filter by, or empty string for all." },
   }),
   tool("search_chat", "Search the full chat history of this project.", {
     query: { type: "string", description: "Words to look for." },
