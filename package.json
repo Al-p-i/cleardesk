@@ -1,6 +1,6 @@
 {
   "name": "cleardesk",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "ClearDesk: a chat-first project workspace for Obsidian, powered by Claude.",
   "scripts": {
     "build": "node esbuild.config.mjs && cp manifest.json styles.css build/",

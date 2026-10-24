@@ -183,7 +183,9 @@ export class PanelView extends ItemView {
       await this.plugin.store.updateTask(p.folder, t, (x) => ({ ...x, done: !x.done, doneDate: x.done ? undefined : today }));
     });
     const text = row.createSpan("cd-task-text");
-    appendLinkified(text, plainLinks(t.text));
+    const [title, ...details] = t.text.split("\n");
+    appendLinkified(text, plainLinks(title));
+    if (details.length) appendLinkified(text.createDiv("cd-task-details"), plainLinks(details.join("\n")));
     if (t.due) row.createSpan({ cls: "cd-due", text: t.done ? "" : dueLabel(t.due, today) });
     if (t.source) this.sourceLink(row, t.source);
     text.onClickEvent(() => this.editTask(row, p, t));
@@ -192,23 +194,29 @@ export class PanelView extends ItemView {
   private editTask(row: HTMLElement, p: ProjectState, t: Task) {
     row.empty();
     row.addClass("is-editing");
-    const input = row.createEl("input", { type: "text", value: t.text, cls: "cd-edit" });
+    const input = row.createEl("textarea", { cls: "cd-edit", attr: { rows: "1" } });
+    input.value = t.text;
+    const size = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
     const date = row.createEl("input", { type: "date", value: t.due ?? "", cls: "cd-date" });
     const edit = this.editSession(
       row,
       async () => {
-        if (input.value.trim() === t.text && (date.value || undefined) === t.due) return;
-        await this.plugin.store.updateTask(p.folder, t, (x) => ({ ...x, text: input.value.trim() || x.text, due: date.value || undefined }));
+        const text = input.value.trim();
+        if (text === t.text && (date.value || undefined) === t.due) return;
+        await this.plugin.store.updateTask(p.folder, t, (x) => ({ ...x, text: text || x.text, due: date.value || undefined }));
       },
       { parent: row, label: "Delete task", run: () => this.plugin.store.updateTask(p.folder, t, () => null) }
     );
-    for (const el of [input, date]) {
+    for (const el of [input, date] as HTMLElement[]) {
       el.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") edit.save();
+        // Shift+Enter adds a line to the task.
+        if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); edit.save(); }
         if (ev.key === "Escape") edit.cancel();
       });
     }
+    input.addEventListener("input", size);
     input.focus();
+    size();
   }
 
 

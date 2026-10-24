@@ -1,15 +1,16 @@
 // Chat input grammar.
 //   /t send payslips mon        -> one task
 //   /n kreuzberg is loud        -> one note
-//   /t  (Enter) ... //          -> block: every line is a task
-//   /n  (Enter) ... //          -> block: one multi-line note
+//   /t  (Enter) ...             -> block: one task; extra lines are its details
+//   /n  (Enter) ...             -> block: one multi-line note
+// Blocks are saved as "/t\n..."; older messages end with a "//" closer.
 //   anything else               -> chat with the AI
 
 export type CommandKind = "task" | "note";
 
 interface ParsedMessage {
   kind: CommandKind | "chat";
-  /** task: one entry per task; note: a single entry; chat: a single entry */
+  /** a single entry (empty when there is nothing to save) */
   items: string[];
 }
 
@@ -21,8 +22,8 @@ export function blockOpener(value: string): CommandKind | null {
 }
 
 /**
- * If the last line closes the block ("//" alone, or "... //"), return the
- * block content without the closer; otherwise null. "https://x" never closes.
+ * Older block messages end with a closer ("//" alone, or "... //"). If the last
+ * line is one, return the content without it; otherwise null. "https://x" never closes.
  */
 export function closeBlock(text: string): string | null {
   const lines = text.replace(/\s+$/, "").split("\n");
@@ -36,14 +37,10 @@ export function closeBlock(text: string): string | null {
 }
 
 export function blockItems(kind: CommandKind, content: string): string[] {
-  if (kind === "task") {
-    return content
-      .split("\n")
-      .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim())
-      .filter(Boolean);
-  }
-  const note = content.replace(/^\n+|\s+$/g, "");
-  return note ? [note] : [];
+  let item = content.replace(/^\s+|\s+$/g, "");
+  // A task's first line may be typed as a list item; its details keep their bullets.
+  if (kind === "task") item = item.replace(/^(?:[-*•]|\d+[.)])\s+/, "");
+  return item ? [item] : [];
 }
 
 /** Parse a complete message (single line, or a pasted full block). */

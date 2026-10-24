@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appendEntry, appendTasks, daysUntil, dueLabel, parseEntries, parseTaskLine, parseTasks,
-  plainLinks, serializeTask, sortOpenTasks, splitFrontmatter, updateEntry, updateTask, whenLabel,
+  plainLinks, serializeTask, sortOpenTasks, splitFrontmatter, taskTitle, updateEntry, updateTask, whenLabel,
   type Entry,
 } from "../src/format.ts";
 import { blockItems, blockOpener, closeBlock, parseMessage } from "../src/input.ts";
@@ -90,8 +90,9 @@ test("plainLinks and frontmatter split", () => {
 test("command parsing: single lines, blocks, closers", () => {
   assert.deepEqual(parseMessage("/t send payslips mon"), { kind: "task", items: ["send payslips mon"] });
   assert.deepEqual(parseMessage("/n kreuzberg is loud"), { kind: "note", items: ["kreuzberg is loud"] });
-  assert.deepEqual(parseMessage("/t\n- a\n2. b\n\nc\n//"), { kind: "task", items: ["a", "b", "c"] });
+  assert.deepEqual(parseMessage("/t\n- call agency fri\n- ask about pets\n\n//"), { kind: "task", items: ["call agency fri\n- ask about pets"] });
   assert.deepEqual(parseMessage("/n\nline one\nline two //"), { kind: "note", items: ["line one\nline two"] });
+  assert.deepEqual(parseMessage("/t\ncall agency fri\nask about pets"), { kind: "task", items: ["call agency fri\nask about pets"] });
   assert.deepEqual(parseMessage("what is the rent?"), { kind: "chat", items: ["what is the rent?"] });
   assert.deepEqual(parseMessage("/tomorrow is a word"), { kind: "chat", items: ["/tomorrow is a word"] });
   assert.equal(blockOpener(" /t "), "task");
@@ -390,4 +391,19 @@ test("compact file summary for the AI", () => {
   const paths = ["Attachments/a/1.jpg", "Attachments/a/2.jpg", "Attachments/b.mov", "lease.pdf", "Docs/plan.md", "zz.md"];
   assert.deepEqual(filesSummary(paths), ["- Attachments/ (3 files)", "- Docs/ (1 file)", "- lease.pdf", "- zz.md"]);
   assert.deepEqual(filesSummary(["a.md", "b.md", "c.md"], 2), ["- a.md", "- b.md", "- …and 1 more files"]);
+});
+
+test("multi-line tasks keep their details as indented lines", () => {
+  const t = { raw: "", done: false, text: "Call agency\nask about pets\n- and parking", due: "2026-10-30", id: "t-aa11bb" };
+  const file = appendTasks("# Tasks", [t, { raw: "", done: false, text: "Next one" }]);
+  assert.equal(file, "# Tasks\n- [ ] Call agency 📅 2026-10-30 ^t-aa11bb\n    ask about pets\n    - and parking\n- [ ] Next one\n");
+  const tasks = parseTasks(file);
+  assert.deepEqual(tasks.map((x) => x.text), ["Call agency\nask about pets\n- and parking", "Next one"]);
+  assert.equal(taskTitle(tasks[0].text), "Call agency");
+  // Completing or deleting a task moves its detail lines with it.
+  const done = updateTask(file, tasks[0], (x) => ({ ...x, done: true, doneDate: "2026-10-24" }));
+  assert.equal(done, "# Tasks\n- [x] Call agency 📅 2026-10-30 ✅ 2026-10-24 ^t-aa11bb\n    ask about pets\n    - and parking\n- [ ] Next one\n");
+  assert.equal(updateTask(file, tasks[0], () => null), "# Tasks\n- [ ] Next one\n");
+  // An indented checkbox is a task of its own, not a detail.
+  assert.equal(parseTasks("- [ ] a\n    - [ ] b").length, 2);
 });

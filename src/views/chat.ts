@@ -1,7 +1,7 @@
-import { Component, ItemView, MarkdownRenderer, Scope, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Platform, Scope, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import type ClearDesk from "../main";
 import { Entry, fullDateLabel, isoDate, isoDateTime, queryWords, snippetParts, splitEmbeds, updatedLabel, whenLabel } from "../format";
-import { CommandKind, blockOpener, closeBlock } from "../input";
+import { CommandKind, blockOpener, parseMessage } from "../input";
 import { appendLinkified, openExternal } from "./links";
 import { isClosed } from "../store";
 import { isImageName, renderAttachments } from "./attachments";
@@ -9,7 +9,7 @@ import { isImageName, renderAttachments } from "./attachments";
 export const CHAT_VIEW = "cleardesk-chat";
 
 const BLOCK_HINT: Record<CommandKind, { icon: string; label: string }> = {
-  task: { icon: "check-square", label: "Tasks · each line is a task" },
+  task: { icon: "check-square", label: "Task" },
   note: { icon: "sticky-note", label: "Note" },
 };
 
@@ -17,6 +17,7 @@ export class ChatView extends ItemView {
   private listEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private hintEl!: HTMLElement;
+  private sendEl!: HTMLButtonElement;
   private headerEl!: HTMLElement;
   private busyEl!: HTMLElement;
   private block: CommandKind | null = null;
@@ -69,8 +70,11 @@ export class ChatView extends ItemView {
     const attach = box.createEl("button", { cls: "cd-attach", attr: { "aria-label": "Attach files or images", type: "button" } });
     setIcon(attach, "paperclip");
     attach.addEventListener("click", () => this.pickerEl.click());
+    this.sendEl = box.createEl("button", { cls: "cd-send", attr: { type: "button" } });
+    this.sendEl.addEventListener("mousedown", (ev) => ev.preventDefault()); // keep the keyboard open
+    this.sendEl.addEventListener("click", () => this.submit());
     this.inputEl.addEventListener("keydown", (ev) => this.onKey(ev));
-    this.inputEl.addEventListener("input", () => this.onInput());
+    this.inputEl.addEventListener("input", () => this.autosize());
     this.pickerEl = composer.createEl("input", { type: "file", attr: { multiple: "", style: "display:none" } });
     this.pickerEl.addEventListener("change", () => {
       this.addFiles([...(this.pickerEl.files ?? [])]);
@@ -168,16 +172,18 @@ export class ChatView extends ItemView {
       const h = BLOCK_HINT[this.block];
       const label = this.hintEl.createSpan("cd-hint-block");
       setIcon(label.createSpan(), h.icon);
-      label.createSpan({ text: ` ${h.label} · ` });
-      label.createEl("code", { text: "//" });
-      label.createSpan({ text: " to finish · Esc to cancel" });
-      this.inputEl.placeholder = this.block === "task" ? "one task per line" : "write your note";
+      label.createSpan({ text: ` ${h.label} · ${Platform.isMobile ? "tap ✓ to save" : "Shift+Enter for a new line · Esc to cancel"}` });
+      this.inputEl.placeholder = this.block === "task" ? "the task; more lines add details" : "write your note";
     } else {
-      for (const c of ["/t task", "/n note"]) this.hintEl.createEl("code", { cls: "cd-chip", text: c });
+      for (const [kind, text] of [["task", "/t task"], ["note", "/n note"]] as const) {
+        const chip = this.hintEl.createEl("button", { cls: "cd-chip", text, attr: { type: "button", "aria-label": `New ${kind}` } });
+        chip.addEventListener("click", () => this.enterBlock(kind));
+      }
       this.inputEl.placeholder = p ? `Ask about ${p.home ? "anything" : p.name}, or type /t or /n` : "Create a project to start";
     }
     this.inputEl.toggleClass("is-block", !!this.block);
     this.inputEl.parentElement?.toggleClass("is-block", !!this.block);
+    this.syncSend();
   }
 
   async reload(reset: boolean) {
@@ -307,13 +313,26 @@ export class ChatView extends ItemView {
       let copyText = e.body;
       if (e.kind === "me") {
         const { text, files } = splitEmbeds(e.body);
-        if (text) appendLinkified(el.createDiv("cd-msg-body"), text);
+        // Tasks and notes show a label instead of their /t or /n; copy gives only the text.
+        const cmd = parseMessage(text);
+        const shown = cmd.kind === "chat" ? text : cmd.items[0] ?? "";
+        if (cmd.kind !== "chat") {
+          el.addClass("is-command");
+          const tag = el.createDiv("cd-msg-tag");
+          setIcon(tag.createSpan(), BLOCK_HINT[cmd.kind].icon);
+          tag.createSpan({ text: BLOCK_HINT[cmd.kind].label });
+        }
+        if (shown) {
+          const body = el.createDiv("cd-msg-body");
+          const [first, ...details] = cmd.kind === "task" ? shown.split("\n") : [shown];
+          appendLinkified(body, first);
+          if (details.length) appendLinkified(body.createDiv("cd-task-details"), details.join("\n"));
+        }
         this.missing += renderAttachments(this.app, el, files, {
           resolve: (l) => this.plugin.store.resolveLink(l, this.chatSource(e)),
           onMissing: (l) => this.plugin.links.heal(this.folder, l),
         });
-        if (/^\/[tn](\s|$)/.test(e.body)) el.addClass("is-command");
-        copyText = text;
+        copyText = shown;
       } else {
         MarkdownRenderer.render(this.app, e.body, el.createDiv("cd-msg-body"), p.folder, this.md);
       }
@@ -481,26 +500,30 @@ export class ChatView extends ItemView {
     }
     if (ev.key !== "Enter") return;
     if (this.block) {
-      if (ev.metaKey || ev.ctrlKey) {
+      // Desktop: Enter saves, Shift+Enter adds a line. Phones have no Shift+Enter,
+      // so there Enter adds a line and the ✓ button saves.
+      if (ev.metaKey || ev.ctrlKey || (!Platform.isMobile && !ev.shiftKey)) {
         ev.preventDefault();
-        this.submitBlock(closeBlock(value) ?? value);
-        return;
+        this.submit();
       }
-      const closed = closeBlock(value);
-      if (closed !== null && !ev.shiftKey) {
-        ev.preventDefault();
-        this.submitBlock(closed);
-      }
-      return; // plain Enter = new line inside a block
+      return;
     }
     if (ev.shiftKey) return;
     ev.preventDefault();
+    this.submit();
+  }
+
+  /** Enter or the send button: send the message, or save the open task or note. */
+  private submit() {
+    const value = this.inputEl.value;
+    if (this.block) {
+      this.submitBlock(value);
+      return;
+    }
     const opener = blockOpener(value);
     if (opener) {
-      this.block = opener;
       this.inputEl.value = "";
-      this.renderHint();
-      this.autosize();
+      this.enterBlock(opener);
       return;
     }
     if (!value.trim() && !this.files.length) return;
@@ -509,15 +532,12 @@ export class ChatView extends ItemView {
     this.enqueue(value);
   }
 
-  private onInput() {
-    if (this.block) {
-      const lines = this.inputEl.value.split("\n");
-      if (lines.length > 1 && lines[lines.length - 1].trim() === "//") {
-        this.submitBlock(lines.slice(0, -1).join("\n"));
-        return;
-      }
-    }
-    this.autosize();
+  private syncSend() {
+    if (!this.sendEl) return;
+    const label = this.block ? `Save ${this.block}` : "Send";
+    setIcon(this.sendEl, this.block ? "check" : "arrow-up");
+    this.sendEl.setAttr("aria-label", label);
+    this.sendEl.toggleClass("is-ready", !!this.inputEl.value.trim() || this.files.length > 0);
   }
 
   private submitBlock(content: string) {
@@ -525,7 +545,15 @@ export class ChatView extends ItemView {
     if (!kind) return;
     this.exitBlock();
     if (!content.trim() && !this.files.length) return;
-    this.enqueue(`/${kind === "task" ? "t" : "n"}\n${content.replace(/\s+$/, "")}\n//`);
+    this.enqueue(`/${kind === "task" ? "t" : "n"}\n${content.replace(/\s+$/, "")}`);
+  }
+
+  /** Start a task or note; text already typed becomes its first line. */
+  private enterBlock(kind: CommandKind) {
+    this.block = kind;
+    this.renderHint();
+    this.autosize();
+    this.inputEl.focus();
   }
 
   private exitBlock() {
@@ -540,6 +568,7 @@ export class ChatView extends ItemView {
   private autosize() {
     this.inputEl.style.height = "auto";
     this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 320) + "px";
+    this.syncSend();
   }
 
   // ---------- attachments ----------
@@ -554,6 +583,7 @@ export class ChatView extends ItemView {
   private renderPendingFiles() {
     this.filesEl.empty();
     this.filesEl.toggle(this.files.length > 0);
+    this.syncSend();
     this.files.forEach((f, i) => {
       const chip = this.filesEl.createDiv("cd-file-chip is-pending");
       if (isImageName(f.name) && f.type.startsWith("image/")) {

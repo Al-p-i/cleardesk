@@ -22,7 +22,7 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 - **Quick capture**:
   - `/t call the agency fri`: a task, with the date understood
   - `/n kreuzberg is loud`: a note, auto-tagged
-  - `/t` or `/n` alone opens a block: write several lines and close with `//`
+  - `/t` or `/n` alone (or the chips above the input) starts a multi-line task or note: Shift+Enter for a new line, Enter or ✓ to save (on a phone, Enter adds a line and ✓ saves). A task's extra lines are its details.
 - **Automatic filing**: facts you mention in passing are saved as AI facts, links you paste are saved with their page title, and every change gets a receipt with **undo**.
 - **Project card**: your goal, plus key facts (budget, deadline, shortlist…) that Claude keeps up to date.
 - **Notes feed**: your notes, AI facts and links in one list, with filters, topic tags, drag-to-reorder and pinning.

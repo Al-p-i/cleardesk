@@ -53,7 +53,9 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-copy:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
 .cd-copy svg { width: 13px; height: 13px; }
 .cd-msg.cd-me { background: var(--background-secondary); padding: 5px 10px; max-width: min(640px, 85%); }
-.cd-msg.cd-me.is-command { font-family: var(--font-monospace); font-size: calc(var(--cd-msg) - 1.5px); border-left: 3px solid var(--cd-color); border-radius: 0 var(--radius-m) var(--radius-m) 0; }
+.cd-msg.cd-me.is-command { border-left: 3px solid var(--cd-color); border-radius: 0 var(--radius-m) var(--radius-m) 0; }
+.cd-msg-tag { display: flex; align-items: center; gap: 4px; font-size: var(--cd-meta); font-weight: 500; color: var(--cd-color); margin-bottom: 1px; user-select: none; -webkit-user-select: none; }
+.cd-msg-tag svg { width: 12px; height: 12px; }
 .cd-msg.cd-ai { padding: 2px; width: 100%; }
 .cd-msg.cd-ai .cd-msg-body > *:first-child { margin-top: 0; }
 .cd-msg.cd-ai .cd-msg-body > *:last-child { margin-bottom: 0; }
@@ -89,7 +91,8 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-composer { padding: 6px 12px 10px; border-top: 1px solid var(--background-modifier-border); }
 .cd-composer > * { max-width: 820px; margin-left: auto; margin-right: auto; display: block; }
 .cd-hint { display: flex; gap: 6px; margin-bottom: 4px; min-height: 16px; }
-.cd-hint .cd-chip { font-size: var(--cd-meta); color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); padding: 0 6px; background: none; }
+.cd-hint .cd-chip { font-size: var(--cd-meta); color: var(--text-muted); border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); padding: 0 6px; background: none; box-shadow: none; height: auto; font-family: var(--font-monospace); cursor: pointer; }
+.cd-hint .cd-chip:hover { color: var(--text-normal); border-color: var(--text-faint); }
 .cd-hint-block { color: var(--cd-color); font-size: var(--cd-meta); font-weight: 500; display: inline-flex; align-items: center; gap: 2px; }
 .cd-hint-block svg { width: 13px; height: 13px; }
 .cd-input-box { display: flex; align-items: flex-end; gap: 2px; border: 1px solid var(--cd-color); border-radius: var(--radius-m); background: var(--background-modifier-form-field); padding-right: 4px; }
@@ -100,6 +103,10 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cleardesk button.cd-attach { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-bottom: 2px; padding: 0; background: transparent; box-shadow: none; border: none; color: var(--text-faint); cursor: pointer; border-radius: var(--radius-s); }
 .cleardesk button.cd-attach:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
 .cd-attach svg { width: 16px; height: 16px; }
+.cleardesk button.cd-send { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0 0 3px 2px; padding: 0; border: none; box-shadow: none; border-radius: 50%; background: var(--background-modifier-border); color: var(--text-faint); cursor: pointer; transition: background 0.12s, color 0.12s; }
+.cleardesk button.cd-send.is-ready { background: var(--cd-color); color: var(--text-on-accent); }
+.cleardesk button.cd-send.is-ready:hover { filter: brightness(1.08); }
+.cd-send svg { width: 15px; height: 15px; stroke-width: 2.5; }
 
 /* ---------- panel ---------- */
 .cd-panel { padding: 8px 8px 24px; }
@@ -130,7 +137,9 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-task.is-done .cd-task-text { text-decoration: line-through; color: var(--text-faint); }
 .cd-task .cd-source { visibility: hidden; }
 .cd-task:hover .cd-source { visibility: visible; }
-.cd-task.is-editing { gap: 4px; align-items: center; }
+.cd-task-details { font-size: var(--cd-meta); color: var(--text-muted); white-space: pre-line; margin-top: 1px; }
+.cd-task.is-editing { gap: 4px; align-items: flex-start; }
+.cd-task.is-editing .cd-edit { resize: none; overflow: hidden; line-height: 1.35; min-height: 0; }
 .cd-task.is-editing .cd-date { width: 118px; font-size: var(--cd-meta); }
 .cd-toggle { color: var(--text-faint); cursor: pointer; font-size: var(--cd-meta); padding: 4px 0; }
 

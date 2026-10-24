@@ -288,11 +288,14 @@ export function snippetParts(text: string, words: string[], radius = 70): { text
 //
 // - [ ] Send payslips 🔗 [[APARTMENTS/_project/chat/2026-10#^m-abc|chat]] 📅 2026-10-20 ^t-k2j3a
 // - [x] Call agency ✅ 2026-10-17 ^t-77aa1
+//     extra lines of a multi-line task are indented under it
 // Field order keeps the Obsidian Tasks plugin happy (dates at the end, block id last).
+// The Tasks plugin reads only the first line; the indented lines render as part of the item.
 
 export interface Task {
   raw: string;
   done: boolean;
+  /** First line is the task itself; further lines are details. */
   text: string;
   due?: string;
   doneDate?: string;
@@ -322,16 +325,40 @@ export function parseTaskLine(line: string): Task | null {
 }
 
 export function serializeTask(t: Task): string {
-  let s = `- [${t.done ? "x" : " "}] ${t.text.replace(/\n/g, " ").trim()}`;
+  const [first = "", ...details] = t.text.split("\n").map((l) => l.trim()).filter(Boolean);
+  let s = `- [${t.done ? "x" : " "}] ${first}`;
   if (t.source) s += ` 🔗 ${t.source}`;
   if (t.due) s += ` 📅 ${t.due}`;
   if (t.done && t.doneDate) s += ` ✅ ${t.doneDate}`;
   if (t.id) s += ` ^${t.id}`;
-  return s;
+  return [s, ...details.map((l) => `    ${l}`)].join("\n");
+}
+
+export function taskTitle(text: string): string {
+  return text.split("\n")[0];
+}
+
+/** Indented, non-empty, not itself a task: a detail line of the task above. */
+const DETAIL_LINE = /^(?:\t| {2,})\s*(?![-*] \[[ xX]\] )(\S.*)$/;
+
+/** Each task with its line span [start, end) in the file. */
+function taskSpans(text: string): { task: Task; start: number; end: number }[] {
+  const lines = text.split("\n");
+  const out: { task: Task; start: number; end: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const task = parseTaskLine(lines[i]);
+    if (!task) continue;
+    let end = i + 1;
+    for (let m; end < lines.length && (m = DETAIL_LINE.exec(lines[end])); end++) task.text += "\n" + m[1].trim();
+    task.raw = lines.slice(i, end).join("\n");
+    out.push({ task, start: i, end });
+    i = end - 1;
+  }
+  return out;
 }
 
 export function parseTasks(text: string): Task[] {
-  return text.split("\n").map(parseTaskLine).filter((t): t is Task => t !== null);
+  return taskSpans(text).map((s) => s.task);
 }
 
 export function appendTasks(text: string, tasks: Task[]): string {
@@ -339,17 +366,14 @@ export function appendTasks(text: string, tasks: Task[]): string {
   return (base ? base + "\n" : "") + tasks.map(serializeTask).join("\n") + "\n";
 }
 
-/** Replace (or delete, when fn returns null) the first line matching the task. */
+/** Replace (or delete, when fn returns null) the task and its detail lines. */
 export function updateTask(text: string, task: Task, fn: (t: Task) => Task | null): string {
+  const spans = taskSpans(text);
+  const span = (task.id && spans.find((s) => s.task.id === task.id)) || spans.find((s) => s.task.raw === task.raw);
+  if (!span) return text;
   const lines = text.split("\n");
-  let i = task.id ? lines.findIndex((l) => parseTaskLine(l)?.id === task.id) : -1;
-  if (i === -1) i = lines.indexOf(task.raw);
-  if (i === -1) return text;
-  const parsed = parseTaskLine(lines[i]);
-  if (!parsed) return text;
-  const next = fn(parsed);
-  if (next) lines[i] = serializeTask(next);
-  else lines.splice(i, 1);
+  const next = fn(span.task);
+  lines.splice(span.start, span.end - span.start, ...(next ? [serializeTask(next)] : []));
   return lines.join("\n");
 }
 

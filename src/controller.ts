@@ -3,7 +3,7 @@ import { TFile, arrayBufferToBase64, requestUrl } from "obsidian";
 import { cleanExport, googleExportUrl, looksLikeLoginPage } from "./google";
 import { Ai, ToolOutput, keyProblem } from "./ai";
 import {
-  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, splitEmbeds, splitUrls, withEmbeds,
+  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, splitEmbeds, splitUrls, taskTitle, withEmbeds,
 } from "./format";
 import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
@@ -191,16 +191,19 @@ export class Controller {
     return blocks;
   }
 
-  private async addTasks(project: Project, me: Entry, lines: string[]) {
-    let tasks = lines.map((text) => ({ text, due: "" }));
+  private async addTasks(project: Project, me: Entry, items: string[]) {
+    // The AI cleans up the first line and finds the due date; details stay as typed.
+    const titles = items.map(taskTitle);
+    let tasks = titles.map((text) => ({ text, due: "" }));
     if (this.ai.configured) {
       try {
-        const parsed = await this.ai.parseTasks(lines, new Date());
-        if (parsed.length === lines.length) tasks = parsed;
+        const parsed = await this.ai.parseTasks(titles, new Date());
+        if (parsed.length === titles.length) tasks = parsed;
       } catch (e) {
         console.warn("ClearDesk: task parsing failed, saving as typed", e);
       }
     }
+    tasks = tasks.map((t, i) => ({ ...t, text: [t.text, ...items[i].split("\n").slice(1)].join("\n") }));
     const tx = new Tx();
     const source = this.store.chatLink(project.folder, me);
     await this.store.addTasks(
@@ -209,7 +212,7 @@ export class Controller {
       tx
     );
     const dates = tasks.map((t) => (isIsoDate(t.due) ? dueLabel(t.due) : "–"));
-    const what = tasks.length === 1 ? `Task added · ${tasks[0].text}` : `${tasks.length} tasks added`;
+    const what = tasks.length === 1 ? `Task added · ${taskTitle(tasks[0].text)}` : `${tasks.length} tasks added`;
     const when = dates.every((d) => d === "–") ? "" : ` · ${dates.join(" · ")}`;
     await this.receipt(project, `✓ ${what}${when}`, tx);
     this.emit("data", project.folder);
@@ -324,7 +327,7 @@ export class Controller {
           const task = ctx.taskById.get(s("task_id"));
           if (!task) return "No open task with that id.";
           await this.store.updateTask(project.folder, task, (t) => ({ ...t, done: true, doneDate: isoDate() }), tx);
-          receipts.push(`✓ Done · ${plainLinks(task.text)}`);
+          receipts.push(`✓ Done · ${plainLinks(taskTitle(task.text))}`);
           return "Marked done.";
         }
         case "read_file": {
@@ -467,9 +470,9 @@ export class Controller {
     const openLines = open.map((t, i) => {
       const id = t.id ?? `x-${i + 1}`;
       taskById.set(id, t);
-      return `- [${id}] ${plainLinks(t.text)}${t.due ? ` (due ${t.due})` : ""}`;
+      return `- [${id}] ${plainLinks(t.text).replace(/\n/g, " / ")}${t.due ? ` (due ${t.due})` : ""}`;
     });
-    const done = tasks.filter((t) => t.done).slice(-8).map((t) => `- ${plainLinks(t.text)}${t.doneDate ? ` (done ${t.doneDate})` : ""}`);
+    const done = tasks.filter((t) => t.done).slice(-8).map((t) => `- ${plainLinks(taskTitle(t.text))}${t.doneDate ? ` (done ${t.doneDate})` : ""}`);
     // Pinned and recent items always; the rest is found with search_notes.
     const mem = notesContext(notes);
     const noteLines = mem.shown.map(noteLine);
