@@ -63,7 +63,7 @@ ClearDesk isn't in the Obsidian community store yet.
 
 - When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand, and long notes are cut short in what's sent with every message. Nothing is sent anywhere else, except fetching titles of links you paste, Google exports of links you ask about, and OpenStreetMap lookups of the places on maps you ask for.
 - Your API key is stored in the vault's plugin data (`.obsidian/plugins/cleardesk/data.json`). Don't commit or share that file.
-- API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. Prompt caching keeps follow-up messages cheap (the instructions and earlier conversation are re-read from Anthropic's cache). You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
+- API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. **Settings → ClearDesk → API usage** shows an estimate for this month and last month, from each request's token counts and Anthropic's list prices, across your devices (each device keeps its own `usage-….json` in the plugin folder). Prompt caching keeps follow-up messages cheap (the instructions and earlier conversation are re-read from Anthropic's cache). You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
 
 ## How it stores things
 

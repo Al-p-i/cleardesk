@@ -9,6 +9,7 @@ import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
 import { ImportModal, NewProjectModal, RepairModal } from "./modals";
 import { LinkKeeper } from "./linkkeeper";
+import { UsageLogger } from "./usagelog";
 import { MAP_BLOCK, MapSpec, mapFile, mapFileName, mapRefPath, parseMap } from "./map";
 import { projectPath, relPath } from "./paths";
 import { MapChild } from "./views/map";
@@ -55,6 +56,7 @@ export default class ClearDesk extends Plugin {
   store!: Store;
   ai!: Ai;
   controller!: Controller;
+  usage!: UsageLogger;
   links!: LinkKeeper;
   projects: ProjectState[] = [];
   /** "projects" | "active" | ("data" | "chat", folder) */
@@ -66,6 +68,8 @@ export default class ClearDesk extends Plugin {
     this.store = new Store(this.app);
     this.store.home = this.settings.homeName || HOME;
     this.ai = new Ai(() => this.settings);
+    this.usage = new UsageLogger(this.app, this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`);
+    this.ai.onUsage = (model, u) => this.usage.record(model, u);
     this.controller = new Controller(this.store, this.ai, (kind, folder) => this.events.trigger(kind, folder));
     this.controller.onStream = (folder, chat, text, status) => this.events.trigger("stream", folder, chat, text, status);
     this.links = new LinkKeeper(this.store, () => this.projects, this.events);
@@ -227,6 +231,7 @@ export default class ClearDesk extends Plugin {
   }
 
   onunload() {
+    this.usage?.save();
     this.scopeEl?.remove();
     document.body.removeClass("cleardesk-hide-system", "cd-size-compact", "cd-size-roomy", "cd-font-text");
   }

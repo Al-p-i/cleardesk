@@ -4,3 +4,4 @@ test/harness/*.mjs
 .deploy-target
 data.json
 .DS_Store
+usage-*.json

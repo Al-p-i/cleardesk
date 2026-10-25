@@ -1,6 +1,8 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type ClearDesk from "./main";
 import { DEFAULT_AI, cleanKey, keyProblem } from "./ai";
+import { monthKey } from "./format";
+import { usageLabel } from "./usage";
 
 export class ClearDeskSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: ClearDesk) {
@@ -41,6 +43,21 @@ export class ClearDeskSettingTab extends PluginSettingTab {
           await save();
         })
       );
+
+    // Cost estimate: filled in once the usage files are read.
+    new Setting(containerEl).setHeading().setName("API usage (estimate)");
+    const thisMonth = new Setting(containerEl).setName("This month").setDesc("…");
+    const lastMonth = new Setting(containerEl).setName("Last month").setDesc("…");
+    containerEl.createDiv({
+      cls: "setting-item-description cd-usage-note",
+      text: "Estimated from each request's token counts and Anthropic's list prices, across all your devices. Your bill at platform.claude.com is the exact figure.",
+    });
+    this.plugin.usage.totals().then((log) => {
+      const now = new Date();
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      thisMonth.setDesc(usageLabel(log[monthKey(now)]));
+      lastMonth.setDesc(usageLabel(log[monthKey(prev)]));
+    });
 
     new Setting(containerEl).setHeading().setName("Models");
     const model = (name: string, desc: string, key: "chatModel" | "fastModel" | "docModel") =>

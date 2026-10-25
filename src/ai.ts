@@ -3,6 +3,7 @@ import { requestUrl } from "obsidian";
 import { keyProblem } from "./key";
 
 export { cleanKey, keyProblem } from "./key";
+import type { UsageCounts } from "./usage";
 
 export interface AiSettings {
   apiKey: string;
@@ -46,7 +47,18 @@ const obsidianFetch = async (input: string | URL | Request, init?: RequestInit):
 };
 
 export class Ai {
+  /** Called with the model and token counts of every response, for the cost estimate. */
+  onUsage?: (model: string, usage: UsageCounts) => void;
+
   constructor(private settings: () => AiSettings) {}
+
+  private track(res: { model: string; usage: unknown }) {
+    try {
+      this.onUsage?.(res.model, res.usage as UsageCounts);
+    } catch (e) {
+      console.warn("ClearDesk: recording usage failed", e);
+    }
+  }
 
   get key(): string {
     return this.settings().apiKey;
@@ -78,6 +90,7 @@ export class Ai {
       messages: [{ role: "user", content: user }],
       output_config: { effort: "low", format: { type: "json_schema", schema } },
     });
+    this.track(res);
     if (res.stop_reason === "refusal") throw new Error("The model declined this request.");
     const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     return JSON.parse(text) as T;
@@ -259,7 +272,9 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
           }
         });
         stream.on("text", (d) => onText(d));
-        return await stream.finalMessage();
+        const done = await stream.finalMessage();
+        this.track(done);
+        return done;
       } catch (e) {
         if (received || !(e instanceof Anthropic.APIConnectionError)) throw e;
         console.warn("ClearDesk: streaming unavailable, using complete responses", e);
@@ -267,6 +282,7 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
       }
     }
     const res = await this.client().beta.messages.create(params);
+    this.track(res);
     for (const b of res.content) if (b.type === "text") onText(b.text);
     return res;
   }
@@ -300,6 +316,7 @@ Do your calculations first; then output only the finished document, with no comm
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
       });
+      this.track(res);
       if (res.stop_reason !== "pause_turn") break;
       messages.push({ role: "assistant", content: res.content as Beta["content"] });
     }

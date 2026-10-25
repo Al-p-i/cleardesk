@@ -10,6 +10,8 @@ const msg = (content: any[], stop_reason: string) => ({
 (globalThis as any).fetch = async () => { throw new TypeError("Failed to fetch"); };
 console.warn = () => {};
 const ai = new Ai(() => ({ ...DEFAULT_AI, apiKey: "test-key" }));
+const usageSeen: string[] = [];
+ai.onUsage = (model, u) => usageSeen.push(`${model}:${u.input_tokens}/${u.output_tokens}`);
 
 // 1) chat tool loop
 script([
@@ -46,6 +48,8 @@ assert.deepEqual(first.json.messages[2].content, [{ type: "text", text: "<projec
 assert.equal(JSON.stringify(second.json.messages.slice(0, 3)), JSON.stringify(first.json.messages), "the tool loop only appends");
 console.log("chat loop ok:", first.url);
 console.log("prompt caching ok");
+assert.equal(usageSeen.length, 2, "every response's usage is recorded (both turns of the tool loop)");
+console.log("usage recorded ok");
 
 // 2) structured /t parsing on the fast model
 script([msg([{ type: "text", text: JSON.stringify({ tasks: [{ text: "Send payslips", due: "2026-10-19" }] }) }], "end_turn")]);
