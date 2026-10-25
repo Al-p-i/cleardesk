@@ -148,6 +148,8 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
   /** Chat turn with tools. Runs the tool loop until the model is done. */
   async chat(args: {
     system: string;
+    /** The project as it is now; sent with the latest message, so earlier turns stay cached. */
+    context?: string;
     history: Beta[];
     user: string | Anthropic.Beta.Messages.BetaContentBlockParam[];
     tools: BetaTool[];
@@ -157,7 +159,17 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
     /** Name of the tool about to run. */
     onTool?: (name: string) => void;
   }): Promise<string> {
-    const messages: Beta[] = [...args.history, { role: "user", content: args.user }];
+    // Prompt caching: the instructions and tools are cached for an hour (they rarely change),
+    // the conversation up to the latest message for five minutes, and within a turn the
+    // automatic breakpoint follows the tool loop. The project context changes often, so it
+    // rides with the latest message instead of invalidating the cached history.
+    const history = args.history.map((m, i) => (i === args.history.length - 1 ? cacheMark(m) : m));
+    const user: Anthropic.Beta.Messages.BetaContentBlockParam[] =
+      typeof args.user === "string" ? [{ type: "text", text: args.user }] : args.user;
+    const messages: Beta[] = [
+      ...history,
+      { role: "user", content: args.context ? [{ type: "text", text: args.context }, ...user] : user },
+    ];
     const texts: string[] = [];
     for (let i = 0; i < 10; i++) {
       // Separate text from consecutive model turns with a blank line, as in the final reply.
@@ -171,9 +183,10 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
         {
           model: this.settings().chatModel,
           max_tokens: 16000,
-          system: args.system,
+          system: [{ type: "text", text: args.system, cache_control: { type: "ephemeral", ttl: "1h" } }],
           messages,
           tools: args.tools,
+          cache_control: { type: "ephemeral" },
           output_config: { effort: "low" },
           betas: ["server-side-fallback-2026-07-01"],
           fallbacks: "default",
@@ -181,6 +194,8 @@ Current key facts: ${ctx.keyFacts.map((f) => `${f.label}: ${f.value}`).join("; "
         onText,
         args.onTool
       );
+      const u = res.usage;
+      console.debug(`ClearDesk: tokens in ${u.input_tokens} · cached ${u.cache_read_input_tokens ?? 0} · cache write ${u.cache_creation_input_tokens ?? 0} · out ${u.output_tokens}`);
       if (res.stop_reason === "refusal") {
         texts.push("I can't help with that request.");
         break;
@@ -296,4 +311,14 @@ function documentText(content: { type: string; text?: string }[]): string {
 
 function isoDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** The same message with a cache breakpoint on its last block. */
+function cacheMark(m: Beta): Beta {
+  const blocks: Anthropic.Beta.Messages.BetaContentBlockParam[] =
+    typeof m.content === "string" ? [{ type: "text", text: m.content }] : [...m.content];
+  const last = blocks[blocks.length - 1];
+  if (!last || !("type" in last) || last.type === "thinking" || last.type === "redacted_thinking") return m;
+  blocks[blocks.length - 1] = { ...last, cache_control: { type: "ephemeral" } } as typeof last;
+  return { ...m, content: blocks };
 }

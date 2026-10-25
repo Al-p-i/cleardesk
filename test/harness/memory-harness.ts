@@ -21,7 +21,7 @@ const out: Record<string, any> = {};
 const ai: any = {
   configured: true, webAccess: false,
   chat: async (args: any) => {
-    system = args.system;
+    system = `${args.system}\n${args.context}`;
     out.search = await args.exec("search_notes", { query: "heating", tag: "", kind: "" });
     out.tag = await args.exec("search_notes", { query: "", tag: "Budget", kind: "fact" });
     out.dup = await args.exec("add_fact", { text: "Mitte heating system is from 1998.", tag: "Mitte" });

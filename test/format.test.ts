@@ -351,7 +351,7 @@ test("deleted attachments are marked, not forgotten", () => {
   assert.equal(fingerprintSize("removed:10:aaaa"), 10);
 });
 
-import { notesContext, noteLine, sameStatement, searchNotes } from "../src/memory.ts";
+import { historySize, notesContext, noteLine, sameStatement, searchNotes } from "../src/memory.ts";
 
 test("AI memory: pinned and recent always, the rest on demand", () => {
   const mk = (i: number, extra: Partial<Entry> = {}): Entry => ({
@@ -364,10 +364,18 @@ test("AI memory: pinned and recent always, the rest on demand", () => {
   const ctx = notesContext(entries, 10);
   assert.equal(ctx.shown.length, 11);
   assert.equal(ctx.shown[0].id, "n-000003", "pinned first");
+  assert.deepEqual(ctx.shown.slice(1, 3).map((e) => e.id), ["n-000049", "n-000048"], "then the top of the feed (file order, newest first)");
   assert.equal(ctx.older, 50 - 1 - 1 - 10);
+  // Dragging an item up in the panel brings it into Claude's view.
+  const dragged = [...entries.slice(0, 5), ...entries.slice(6), entries[5]];
+  assert.equal(notesContext(dragged, 10).shown[1].id, "n-000005");
+  assert.deepEqual([historySize(12), historySize(40), historySize(41), historySize(59), historySize(60), historySize(75)], [12, 40, 41, 59, 40, 55]);
   assert.deepEqual(ctx.tags, [["Mitte", 25], ["Budget", 24]], "replaced items not counted");
   assert.ok(!ctx.shown.some((e) => e.id === "n-000004"));
   assert.equal(noteLine(entries[3]), "[n-000003] 2026-10-04 10:03 fact (pinned) #Mitte: item 3");
+  const long = { ...entries[5], body: "x".repeat(700) };
+  assert.ok(noteLine(long).endsWith("x".repeat(700)), "search results keep up to 1,500 characters");
+  assert.ok(noteLine(long, 600).endsWith("x".repeat(600) + " …(cut)"), "the context cuts long notes");
 
   const notes: Entry[] = [
     { id: "f-1", datetime: "2026-10-12 10:00", kind: "fact", tag: "Mitte", body: "Heating is from 1998", meta: {} },

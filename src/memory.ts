@@ -2,12 +2,13 @@
 // items always, everything else on demand through search_notes.
 // Pure functions, so they can be unit-tested.
 
-import { Entry, matchesAll, queryWords } from "./format";
+import { Entry, feedOrder, matchesAll, queryWords } from "./format";
 
-const RECENT_NOTES = 30;
+/** How many unpinned items Claude sees; the panel draws its line after them. */
+export const CONTEXT_ITEMS = 30;
 
 interface NotesContext {
-  /** pinned first, then the most recent, oldest first within each group */
+  /** pinned first, then the top of the panel's feed, in the panel's order */
   shown: Entry[];
   /** how many current (not replaced) items are left out */
   older: number;
@@ -16,29 +17,43 @@ interface NotesContext {
 }
 
 const current = (entries: Entry[]) => entries.filter((e) => !e.meta["replaced-by"]);
-const byTime = (a: Entry, b: Entry) => a.datetime.localeCompare(b.datetime);
 
-export function notesContext(entries: Entry[], recent = RECENT_NOTES): NotesContext {
-  const live = current(entries);
-  const pinned = live.filter((e) => e.meta.pinned === "true").sort(byTime);
-  const rest = live.filter((e) => e.meta.pinned !== "true").sort(byTime);
-  const latest = rest.slice(-recent);
+/**
+ * What Claude sees of the notes feed: everything pinned, then the first items of the feed
+ * in the owner's order (newest first unless reordered), regardless of kind. Replaced facts
+ * never count. The panel draws a line where this ends, so it shows exactly what Claude knows.
+ */
+export function notesContext(entries: Entry[], recent = CONTEXT_ITEMS): NotesContext {
+  const live = feedOrder(current(entries));
+  const pinned = live.filter((e) => e.meta.pinned === "true");
+  const rest = live.filter((e) => e.meta.pinned !== "true");
   const counts = new Map<string, number>();
   for (const e of live) if (e.tag) counts.set(e.tag, (counts.get(e.tag) ?? 0) + 1);
   return {
-    shown: [...pinned, ...latest],
-    older: rest.length - latest.length,
+    shown: [...pinned, ...rest.slice(0, recent)],
+    older: Math.max(rest.length - recent, 0),
     tags: [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   };
 }
 
-/** One line per item, as the model sees it. */
-export function noteLine(e: Entry): string {
+/**
+ * How many of the latest chat entries go to Claude: at least `keep`, and the window's start
+ * moves in steps of `step`, so the same earlier messages stay put (and cached) for a while.
+ */
+export function historySize(total: number, keep = 40, step = 20): number {
+  return total <= keep ? total : keep + ((total - keep) % step);
+}
+
+/** Past this many pinned items the panel suggests unpinning: all of them go with every message. */
+export const MANY_PINS = 15;
+
+/** One line per item, as the model sees it; long bodies are cut at `max` characters. */
+export function noteLine(e: Entry, max = 1500): string {
   const tag = e.tag ? ` #${e.tag.replace(/\s+/g, "-")}` : "";
   const flags = [e.meta.pinned === "true" ? "pinned" : "", e.meta["replaced-by"] ? `replaced by ${e.meta["replaced-by"]}` : ""]
     .filter(Boolean)
     .join(", ");
-  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${e.body.slice(0, 1500)}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
+  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${e.body.length > max ? e.body.slice(0, max).trimEnd() + " …(cut)" : e.body}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
 }
 
 /**

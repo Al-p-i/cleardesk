@@ -74,27 +74,26 @@ function parseCache(text: string): Record<string, Found> {
 
 // ---------- from the show_map tool input to a saved map ----------
 
-export interface MapInput {
-  title: string;
-  places: { name: string; address: string; color: string; details: string; note_id: string }[];
-  areas: { name: string; color: string; label: string }[];
-  circles: { center: string; radius_m: number; color: string; label: string }[];
-  lines: { from: string; to: string; color: string; label: string }[];
-  legend: { color: string; label: string }[];
-}
-
 const LIMITS = { places: 40, areas: 10, circles: 10, lines: 20 };
 
 /** Look everything up (one place at a time) and build the map to save. */
-export async function resolveMap(input: MapInput, find: Find, progress: (done: number, total: number) => void): Promise<MapSpec> {
-  const places = (input.places ?? []).slice(0, LIMITS.places);
-  const areas = (input.areas ?? []).slice(0, LIMITS.areas);
-  const circles = (input.circles ?? []).slice(0, LIMITS.circles);
-  const lines = (input.lines ?? []).slice(0, LIMITS.lines);
+export async function resolveMap(input: Record<string, unknown>, find: Find, progress: (done: number, total: number) => void): Promise<MapSpec> {
+  // The tool isn't strict (its schema is too big for that), so every field is checked here.
+  const str = (v: unknown) => (v == null ? "" : String(v).trim());
+  const list = <T>(v: unknown, max: number, fn: (o: Record<string, unknown>) => T): T[] =>
+    (Array.isArray(v) ? v : []).filter((o) => o && typeof o === "object").slice(0, max).map(fn);
+  const places = list(input.places, LIMITS.places, (o) => ({
+    name: str(o.name) || str(o.address), address: str(o.address), color: str(o.color), details: str(o.details), note_id: str(o.note_id),
+  })).filter((p) => p.name);
+  const areas = list(input.areas, LIMITS.areas, (o) => ({ name: str(o.name), color: str(o.color), label: str(o.label) })).filter((a) => a.name);
+  const circles = list(input.circles, LIMITS.circles, (o) => ({ center: str(o.center), radius_m: Number(o.radius_m), color: str(o.color), label: str(o.label) }))
+    .filter((c) => c.center);
+  const lines = list(input.lines, LIMITS.lines, (o) => ({ from: str(o.from), to: str(o.to), color: str(o.color), label: str(o.label) }))
+    .filter((l) => l.from && l.to);
   const spec: MapSpec = {
-    title: String(input.title ?? "").trim(),
+    title: str(input.title),
     places: [], areas: [], circles: [], lines: [],
-    legend: (input.legend ?? []).filter((g) => g.label).map((g) => ({ color: asColor(g.color), label: g.label.trim() })),
+    legend: list(input.legend, 12, (o) => ({ color: asColor(str(o.color)), label: str(o.label) })).filter((g) => g.label),
     missing: [],
   };
   const total = places.length + areas.length + circles.length + lines.length * 2;
@@ -114,21 +113,21 @@ export async function resolveMap(input: MapInput, find: Find, progress: (done: n
   const miss = (name: string) => { if (!spec.missing.includes(name)) spec.missing.push(name); };
 
   for (const p of places) {
-    const f = await find((p.address || p.name).trim(), false);
+    const f = await find(p.address || p.name, false);
     step();
     if (!f) { miss(p.name); continue; }
-    const place: MapPlace = { name: p.name.trim(), lat: f.lat, lng: f.lng, color: asColor(p.color) };
-    if (p.details?.trim()) place.details = p.details.trim();
-    if (p.note_id?.trim()) place.note = p.note_id.trim();
+    const place: MapPlace = { name: p.name, lat: f.lat, lng: f.lng, color: asColor(p.color) };
+    if (p.details) place.details = p.details;
+    if (p.note_id) place.note = p.note_id;
     spec.places.push(place);
     known.set(place.name.toLowerCase(), [f.lat, f.lng]);
   }
   for (const a of areas) {
-    const f = await find(a.name.trim(), true);
+    const f = await find(a.name, true);
     step();
     if (!f) { miss(a.name); continue; }
     const area: MapArea = { name: a.name.split(",")[0].trim(), lat: f.lat, lng: f.lng, color: asColor(a.color) };
-    if (a.label?.trim()) area.label = a.label.trim();
+    if (a.label) area.label = a.label;
     if (f.shape) area.shape = f.shape;
     spec.areas.push(area);
   }
@@ -137,8 +136,8 @@ export async function resolveMap(input: MapInput, find: Find, progress: (done: n
     step();
     const radius = Math.min(Math.max(Number(c.radius_m) || 0, 10), 200000);
     if (!at) { miss(c.center); continue; }
-    const circle: MapCircle = { lat: at[0], lng: at[1], radius, color: asColor(c.color), center: c.center.trim() };
-    circle.label = c.label?.trim() || `${distance(radius)} from ${circle.center}`;
+    const circle: MapCircle = { lat: at[0], lng: at[1], radius, color: asColor(c.color), center: c.center };
+    circle.label = c.label || `${distance(radius)} from ${circle.center}`;
     spec.circles.push(circle);
   }
   for (const l of lines) {
@@ -149,8 +148,8 @@ export async function resolveMap(input: MapInput, find: Find, progress: (done: n
     if (!from) miss(l.from);
     if (!to) miss(l.to);
     if (!from || !to) continue;
-    const line: MapLine = { from, to, color: asColor(l.color), ends: [l.from.trim(), l.to.trim()] };
-    if (l.label?.trim()) line.label = l.label.trim();
+    const line: MapLine = { from, to, color: asColor(l.color), ends: [l.from, l.to] };
+    if (l.label) line.label = l.label;
     spec.lines.push(line);
   }
   return spec;

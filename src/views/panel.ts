@@ -1,4 +1,5 @@
 import { ItemView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { MANY_PINS, notesContext } from "../memory";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
 import { Entry, Task, daysUntil, dueLabel, feedOrder, hostOf, isoDate, plainLinks, sortOpenTasks, splitEmbeds, whenLabel } from "../format";
@@ -66,6 +67,7 @@ export class PanelView extends ItemView {
     if (!find()) {
       this.filter = "all";
       this.showHistory = true;
+      this.showOlder = true;
       await this.render();
     }
     const card = find();
@@ -286,24 +288,47 @@ export class PanelView extends ItemView {
     const shown = feedOrder(
       visible.filter((n) => this.filter === "all" || n.kind === this.filter).filter((n) => !this.tag || n.tag === this.tag)
     );
+    const pins = all.filter((n) => n.meta.pinned === "true" && !n.meta["replaced-by"]).length;
+    if (pins > MANY_PINS) {
+      root.createDiv({
+        cls: "cd-pin-warning",
+        text: `${pins} pinned. Claude reads every pinned item with each message; unpin what's no longer key.`,
+      });
+    }
     const feed = root.createDiv("cd-feed");
     if (!shown.length) {
       feed.createDiv({ cls: "cd-muted", text: all.length ? "Nothing matches this filter." : "Notes you add with /n, facts the AI picks up from chat, and links you paste appear here." });
     }
-    // Pinned items never fold into "older".
+    // The feed folds exactly where Claude's context ends: the panel shows what Claude knows.
+    // (Any filter keeps the feed's order, so the items in context are always the first ones.)
+    const inContext = new Set(notesContext(all).shown.map((n) => n.id));
+    const firstOut = shown.findIndex((n) => !n.meta["replaced-by"] && !inContext.has(n.id));
+    const outCount = firstOut === -1 ? 0 : shown.slice(firstOut).filter((n) => !n.meta["replaced-by"]).length;
+    const limit = this.showOlder || firstOut === -1 ? shown.length : firstOut;
     const pinnedCount = shown.filter((n) => n.meta.pinned === "true").length;
-    const limit = this.showOlder ? shown.length : pinnedCount + 20;
     shown.slice(0, limit).forEach((n, i) => {
-      this.renderNote(feed, p, n, byId);
-      if (i === pinnedCount - 1 && pinnedCount < shown.length) feed.createDiv("cd-pinned-divider");
+      if (i === firstOut) this.contextLine(feed, firstOut, outCount);
+      const card = this.renderNote(feed, p, n, byId);
+      if (firstOut !== -1 && i >= firstOut) card.addClass("is-out");
+      if (i === pinnedCount - 1 && pinnedCount < shown.length && i + 1 !== firstOut) feed.createDiv("cd-pinned-divider");
     });
-    if (shown.length > limit) {
-      const more = root.createDiv({ cls: "cd-toggle", text: `▸ ${shown.length - limit} older` });
-      more.onClickEvent(() => { this.showOlder = true; this.render(); });
-    }
+    if (firstOut !== -1 && !this.showOlder) this.contextLine(feed, firstOut, outCount);
   }
 
-  private renderNote(feed: HTMLElement, p: ProjectState, n: Entry, byId: Map<string, Entry>) {
+  /** "In Claude's context ▲ · 12 older, found by search ▸" between the items Claude sees and the rest. */
+  private contextLine(feed: HTMLElement, above: number, below: number) {
+    const line = feed.createDiv("cd-context-line");
+    line.createSpan({ text: above ? "▲ In Claude's context" : "Not in Claude's context" });
+    line.createSpan("cd-spacer");
+    const toggle = line.createSpan({
+      cls: "cd-context-toggle",
+      text: this.showOlder ? "Hide older" : `${below} older, found by search ▸`,
+      attr: { "aria-label": "Claude finds these with search when they're relevant. Pin an item to keep it in context." },
+    });
+    toggle.onClickEvent(() => { this.showOlder = !this.showOlder; this.render(); });
+  }
+
+  private renderNote(feed: HTMLElement, p: ProjectState, n: Entry, byId: Map<string, Entry>): HTMLElement {
     const replacedBy = n.meta["replaced-by"] ? byId.get(n.meta["replaced-by"]) : undefined;
     const pinned = n.meta.pinned === "true";
     const card = feed.createDiv({
@@ -338,7 +363,7 @@ export class PanelView extends ItemView {
     if (n.meta.source) this.sourceLink(meta, n.meta.source);
     meta.createSpan("cd-spacer");
     if (n.tag) meta.createSpan({ cls: "cd-tag", text: n.tag });
-    const pin = meta.createSpan({ cls: "cd-icon-btn cd-pin" + (pinned ? " is-on" : ""), attr: { "aria-label": pinned ? "Unpin" : "Pin to top" } });
+    const pin = meta.createSpan({ cls: "cd-icon-btn cd-pin" + (pinned ? " is-on" : ""), attr: { "aria-label": pinned ? "Unpin" : "Pin: keep at the top, always in Claude's context" } });
     setIcon(pin, "pin");
     pin.onClickEvent((ev) => {
       ev.stopPropagation();
@@ -369,6 +394,7 @@ export class PanelView extends ItemView {
       menu.showAtMouseEvent(ev);
     });
     body.onClickEvent(() => this.editNote(card, p, n));
+    return card;
   }
 
   private editNote(card: HTMLElement, p: ProjectState, n: Entry) {

@@ -39,10 +39,12 @@ const osm = {
 };
 
 let report = "";
+let tools: any[] = [];
+let mapInput: any = input;
 const statuses: string[] = [];
 const ai: any = {
-  configured: true, webAccess: false,
-  chat: async ({ exec }: any) => { report = await exec("show_map", input); return "Here are the flats."; },
+  configured: true, webAccess: true,
+  chat: async (args: any) => { tools = args.tools; report = await args.exec("show_map", mapInput); return "Here are the flats."; },
 };
 const c = new Controller(store, ai, () => {});
 c.onStream = (_f, _t, status) => { if (status) statuses.push(status); };
@@ -100,3 +102,32 @@ assert.match(report, /lookup service didn't respond/);
 assert.equal(chat.filter((e) => e.kind === "ai").length, before + 1);
 assert.ok(!chat[chat.length - 1].body.includes("cleardesk-map"), "no map block when nothing was found");
 console.log("map lookup failure ok");
+
+// The API compiles all strict tool schemas of a request into one grammar with a size limit
+// ("compiled grammar is too large"): only the tools that change things are strict.
+const strict = tools.filter((t) => t.strict).map((t) => t.name);
+assert.ok(strict.length <= 15, `strict tools: ${strict.join(", ")}`);
+for (const t of ["show_map", "read_file", "list_files", "search_notes", "search_chat", "read_google_doc"]) assert.ok(!strict.includes(t), `${t} isn't strict`);
+for (const t of tools.filter((x) => x.strict)) {
+  const s = t.input_schema;
+  assert.deepEqual(s.required, Object.keys(s.properties), `${t.name}: no optional parameters`);
+  assert.ok(Object.values(s.properties).every((p: any) => p.type === "string"), `${t.name}: flat string parameters`);
+}
+console.log(`strict tools ok (${strict.length} of ${tools.filter((t) => t.input_schema).length})`);
+
+// Without strict mode the map input can be sloppy: missing fields, numbers as text, junk entries.
+mapInput = {
+  title: 7,
+  places: [{ name: "Home", address: "52.5, 13.4" }, null, "junk", { address: "52.51, 13.41" }],
+  circles: [{ center: "Home", radius_m: "500" }],
+  lines: [{ from: "Home" }],
+  legend: "none",
+};
+script([]);
+await c.send(project, "map home");
+const loose = parseMap(chat[chat.length - 1].body.split("\n").slice(3, -1).join("\n"))!;
+assert.equal(calls.length, 0, "coordinates and known names need no lookup");
+assert.deepEqual(loose.places.map((p) => [p.name, p.color]), [["Home", "blue"], ["52.51, 13.41", "blue"]]);
+assert.deepEqual([loose.circles[0].radius, loose.circles[0].label], [500, "500 m from Home"]);
+assert.deepEqual([loose.title, loose.lines.length, loose.legend.length], ["7", 0, 0]);
+console.log("loose map input ok");

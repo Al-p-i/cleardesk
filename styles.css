@@ -240,6 +240,12 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-pin.is-on { color: var(--cd-color); }
 .cd-pin.is-on svg { fill: currentColor; }
 .cd-pinned-divider { height: 1px; background: var(--background-modifier-border); margin: 8px 2px 8px 10px; }
+.cd-context-line { display: flex; align-items: center; gap: 6px; margin: 10px 2px 8px; padding-top: 5px; border-top: 1px dashed color-mix(in srgb, var(--cd-color) 60%, transparent); font-size: var(--cd-meta); color: var(--text-muted); }
+.cd-context-toggle { color: var(--text-faint); cursor: pointer; }
+.cd-context-toggle:hover { color: var(--text-normal); }
+.cd-note.is-out { opacity: 0.55; }
+.cd-pin-warning { font-size: var(--cd-meta); color: var(--text-warning, var(--text-muted)); margin: 0 2px 6px; }
+.cd-note.is-out:hover { opacity: 0.85; }
 
 /* ---------- task counts ---------- */
 .cd-task-badge { display: inline-flex; align-items: center; gap: 3px; font-size: var(--cd-meta); color: var(--text-muted); background: var(--background-modifier-hover); border-radius: 8px; padding: 0 6px 0 4px; line-height: 16px; font-variant-numeric: tabular-nums; }

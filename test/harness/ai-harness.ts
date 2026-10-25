@@ -18,7 +18,7 @@ script([
 ]);
 const executed: any[] = [];
 const reply = await ai.chat({
-  system: "sys", history: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }],
+  system: "sys", context: "<project>P</project>", history: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }],
   user: "agency said deposit is 3x rent", tools: [{ name: "add_fact", description: "d", strict: true, input_schema: { type: "object", properties: {}, additionalProperties: false } } as any],
   exec: async (name, input) => { executed.push([name, input]); return "Saved as f-1."; },
 });
@@ -37,7 +37,15 @@ assert.equal(first.json.messages.length, 3);
 const last = second.json.messages.at(-1);
 assert.equal(last.role, "user");
 assert.deepEqual(last.content, [{ type: "tool_result", tool_use_id: "tu_1", content: "Saved as f-1." }]);
+// Prompt caching: instructions for an hour, history up to the latest message, the loop automatically.
+assert.deepEqual(first.json.system, [{ type: "text", text: "sys", cache_control: { type: "ephemeral", ttl: "1h" } }]);
+assert.deepEqual(first.json.cache_control, { type: "ephemeral" });
+assert.deepEqual(first.json.messages[0], { role: "user", content: "hi" });
+assert.deepEqual(first.json.messages[1].content, [{ type: "text", text: "hello", cache_control: { type: "ephemeral" } }]);
+assert.deepEqual(first.json.messages[2].content, [{ type: "text", text: "<project>P</project>" }, { type: "text", text: "agency said deposit is 3x rent" }]);
+assert.equal(JSON.stringify(second.json.messages.slice(0, 3)), JSON.stringify(first.json.messages), "the tool loop only appends");
 console.log("chat loop ok:", first.url);
+console.log("prompt caching ok");
 
 // 2) structured /t parsing on the fast model
 script([msg([{ type: "text", text: JSON.stringify({ tasks: [{ text: "Send payslips", due: "2026-10-19" }] }) }], "end_turn")]);

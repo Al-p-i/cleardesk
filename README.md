@@ -18,14 +18,14 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 ## Features
 
 - **Projects**: each project is a folder in your vault, with its own colour. Switch with a click; the default project (Desk) is always at the top. Mark projects as at risk, blocked, done or archived; done and archived ones fold away.
-- **Chat as the main interface**: ask questions about the project. Claude answers with the project's tasks, notes, facts and files in mind, and streams its reply.
+- **Chat as the main interface**: ask questions about the project. Claude answers with the project's tasks, notes, facts and files in mind, and streams its reply. When you explicitly ask, it can also reschedule, reword or delete tasks and edit or delete notes; every change gets a receipt with undo.
 - **Quick capture**:
   - `/t call the agency fri`: a task, with the date understood
   - `/n kreuzberg is loud`: a note, auto-tagged
   - `/t` or `/n` alone (or the chips above the input) starts a multi-line task or note: Shift+Enter for a new line, Enter or ✓ to save (on a phone, Enter adds a line and ✓ saves). A task's extra lines are its details.
 - **Automatic filing**: facts you mention in passing are saved as AI facts, links you paste are saved with their page title, and every change gets a receipt with **undo**.
 - **Project card**: your goal, plus key facts (budget, deadline, shortlist…) that Claude keeps up to date.
-- **Notes feed**: your notes, AI facts and links in one list, with filters, topic tags, drag-to-reorder and pinning.
+- **Notes feed**: your notes, AI facts and links in one list, with filters, topic tags, drag-to-reorder and pinning. The feed shows what Claude knows: everything pinned plus the top 30 items go with every message, and a line marks where that ends (older items are found by search).
 - **Attachments**: paste, drop or pick images, PDFs and text files; Claude reads them.
 - **Web and Google**: Claude can search the web and read pasted links, including Google Docs, Sheets and Slides shared via link.
 - **Documents**: ask for a comparison, plan or calculation and Claude writes it into the project folder, running real code for the maths.
@@ -57,9 +57,9 @@ ClearDesk isn't in the Obsidian community store yet.
 
 ## Privacy and cost
 
-- When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand. Nothing is sent anywhere else, except fetching titles of links you paste, Google exports of links you ask about, and OpenStreetMap lookups of the places on maps you ask for.
+- When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand, and long notes are cut short in what's sent with every message. Nothing is sent anywhere else, except fetching titles of links you paste, Google exports of links you ask about, and OpenStreetMap lookups of the places on maps you ask for.
 - Your API key is stored in the vault's plugin data (`.obsidian/plugins/cleardesk/data.json`). Don't commit or share that file.
-- API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
+- API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. Prompt caching keeps follow-up messages cheap (the instructions and earlier conversation are re-read from Anthropic's cache). You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
 
 ## How it stores things
 

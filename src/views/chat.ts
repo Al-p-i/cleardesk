@@ -22,7 +22,8 @@ export class ChatView extends ItemView {
   private headerEl!: HTMLElement;
   private busyEl!: HTMLElement;
   private block: CommandKind | null = null;
-  private md = new Component();
+  /** Messages already drawn, kept while unchanged so maps and images don't redraw on every update. */
+  private rendered = new Map<string, { key: string; el: HTMLElement; md: Component; missing: number }>();
   /** The reply being written right now (null when nothing is streaming). */
   private liveText: string | null = null;
   private liveEl: HTMLElement | null = null;
@@ -138,7 +139,6 @@ export class ChatView extends ItemView {
         if (folder === this.folder) this.reload(false);
       })
     );
-    this.addChild(this.md);
     this.renderPendingFiles();
     await this.reload(true);
   }
@@ -212,25 +212,24 @@ export class ChatView extends ItemView {
   private render(entries: Entry[]) {
     this.liveEl = null;
     this.missing = 0;
-    this.removeChild(this.md);
-    this.md = new Component();
-    this.addChild(this.md);
-    const list = this.listEl;
-    list.empty();
+    const old = this.rendered;
+    this.rendered = new Map();
+    const nodes: HTMLElement[] = [];
     if (!entries.length) {
-      const empty = list.createDiv("cd-empty");
+      const empty = createDiv("cd-empty");
       empty.createDiv({ cls: "cd-empty-title", text: "Start talking about this project" });
       empty.createDiv({
         text: "Ask questions, mention new facts, add tasks with /t and notes with /n. Everything gets filed for you.",
       });
-      return;
+      nodes.push(empty);
     }
     if (!this.showAll && entries.length >= 200) {
-      const more = list.createDiv({ cls: "cd-more", text: "Show older messages" });
+      const more = createDiv({ cls: "cd-more", text: "Show older messages" });
       more.onClickEvent(() => {
         this.showAll = true;
         this.reload(false);
       });
+      nodes.push(more);
     }
     let day = "";
     const today = isoDate();
@@ -238,10 +237,25 @@ export class ChatView extends ItemView {
       const d = e.datetime.slice(0, 10);
       if (d !== day) {
         day = d;
-        list.createDiv({ cls: "cd-day", text: d === today ? "Today" : whenLabel(e.datetime, today) });
+        nodes.push(createDiv({ cls: "cd-day", text: d === today ? "Today" : whenLabel(e.datetime, today) }));
       }
-      this.renderEntry(e);
+      // Reuse the message as drawn unless it changed (an undo, an edit, a relinked attachment).
+      const key = `${e.kind}|${e.body}|${e.kind === "receipt" && this.plugin.controller.canUndo(e.id)}`;
+      let r = old.get(e.id);
+      if (r && r.key === key) {
+        old.delete(e.id);
+        this.missing += r.missing;
+      } else {
+        const md = this.addChild(new Component());
+        const before = this.missing;
+        r = { key, el: this.renderEntry(e, md), md, missing: 0 };
+        r.missing = this.missing - before;
+      }
+      this.rendered.set(e.id, r);
+      nodes.push(r.el);
     }
+    for (const gone of old.values()) this.removeChild(gone.md);
+    this.listEl.replaceChildren(...nodes);
     if (this.liveText) this.renderLive();
     this.renderMissingBar();
   }
@@ -305,11 +319,12 @@ export class ChatView extends ItemView {
     this.busyEl.toggle(!!text);
   }
 
-  private renderEntry(e: Entry) {
+  /** Draw one entry (not yet in the list); its maps and embeds belong to md. */
+  private renderEntry(e: Entry, md: Component): HTMLElement {
     const p = this.plugin.active()!;
     if (e.kind === "me" || e.kind === "ai") {
       // A turn: the message, then a row with its time and copy, shown on hover (as in Claude).
-      const turn = this.listEl.createDiv({ cls: `cd-turn cd-turn-${e.kind}`, attr: { "data-id": e.id } });
+      const turn = createDiv({ cls: `cd-turn cd-turn-${e.kind}`, attr: { "data-id": e.id } });
       const el = turn.createDiv(`cd-msg cd-${e.kind}`);
       let copyText = mapsAsText(e.body);
       if (e.kind === "me") {
@@ -335,17 +350,17 @@ export class ChatView extends ItemView {
         });
         copyText = shown;
       } else {
-        MarkdownRenderer.render(this.app, e.body, el.createDiv("cd-msg-body"), p.folder, this.md);
+        MarkdownRenderer.render(this.app, e.body, el.createDiv("cd-msg-body"), p.folder, md);
       }
       const actions = turn.createDiv("cd-msg-actions");
       actions.createSpan({ cls: "cd-msg-time", text: e.datetime.slice(11, 16), attr: { title: fullDateLabel(e.datetime) } });
       if (copyText) this.copyButton(actions, copyText);
-      return;
+      return turn;
     }
-    const el = this.listEl.createDiv({ cls: `cd-msg cd-${e.kind}`, attr: { "data-id": e.id, title: fullDateLabel(e.datetime) } });
+    const el = createDiv({ cls: `cd-msg cd-${e.kind}`, attr: { "data-id": e.id, title: fullDateLabel(e.datetime) } });
     if (e.kind === "receipt") {
       const body = el.createDiv("cd-receipt-body");
-      MarkdownRenderer.render(this.app, e.body, body, p.folder, this.md);
+      MarkdownRenderer.render(this.app, e.body, body, p.folder, md);
       if (e.body.startsWith("Undone: ")) el.addClass("is-undone");
       else if (this.plugin.controller.canUndo(e.id)) {
         const undo = el.createEl("a", { cls: "cd-undo", text: "undo" });
@@ -355,6 +370,7 @@ export class ChatView extends ItemView {
       setIcon(el.createSpan("cd-error-icon"), "alert-circle");
       el.createSpan({ text: ` ${e.body}` });
     }
+    return el;
   }
 
   private copyButton(el: HTMLElement, text: string) {
@@ -639,6 +655,6 @@ export class ChatView extends ItemView {
   }
 
   async onClose() {
-    this.md.unload();
+    this.rendered.clear(); // their components unload with the view
   }
 }
