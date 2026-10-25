@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asColor, distance, mapBlock, mapText, mapsAsText, parseLatLng, parseMap, roundShape, type MapSpec } from "../src/map.ts";
+import { asColor, distance, mapBlock, mapFile, mapFileName, mapInNote, mapRef, mapRefPath, mapText, blocksAsText, parseLatLng, parseMap, roundShape, type MapSpec } from "../src/map.ts";
 
 const spec: MapSpec = {
   title: "Shortlisted flats",
@@ -44,10 +44,10 @@ test("maps become plain text for Claude's history, search and copy", () => {
     ].join("\n")
   );
   const body = `Here they are.\n\n${mapBlock(spec)}\n\n${mapBlock({ ...spec, title: "Second" })}`;
-  const text = mapsAsText(body);
+  const text = blocksAsText(body);
   assert.ok(!text.includes("cleardesk-map") && !text.includes("52.501"));
   assert.match(text, /^Here they are\.\n\n\[Map: Shortlisted flats\n[\s\S]*\]\n\n\[Map: Second\n/);
-  assert.equal(mapsAsText("no maps here"), "no maps here");
+  assert.equal(blocksAsText("no maps here"), "no maps here");
 });
 
 test("map helpers", () => {
@@ -60,4 +60,18 @@ test("map helpers", () => {
   assert.equal(asColor("purple"), "purple");
   assert.equal(asColor("teal"), "blue");
   assert.deepEqual(roundShape({ type: "Polygon", coordinates: [[[13.4123456, 52.4987654]]], extra: 1 }), { type: "Polygon", coordinates: [[[13.41235, 52.49877]]] });
+});
+
+test("saved maps: a file per title, readable, and live references from the chat", () => {
+  assert.equal(mapFileName("Shortlisted flats"), "Maps/Shortlisted flats.md");
+  assert.equal(mapFileName("Flats: 2026/27?"), "Maps/Flats 2026 27.md");
+  assert.equal(mapFileName("  "), "Maps/Map.md");
+  const file = mapFile(spec);
+  assert.deepEqual(mapInNote(file), spec, "the file holds the map");
+  assert.ok(file.startsWith("# Shortlisted flats\n\n```cleardesk-map\n"), "a heading comes first, so the map draws when the file opens");
+  assert.match(file, /On this map .*\n\n- Oranienstr\. 12 \(green\): €1,450 · 2 rooms\n/s, "and a readable list");
+  const ref = mapRef("APARTMENTS/Maps/Shortlisted flats.md");
+  assert.equal(mapRefPath(ref.split("\n")[1]), "APARTMENTS/Maps/Shortlisted flats.md");
+  assert.equal(mapRefPath(JSON.stringify(spec)), null);
+  assert.equal(blocksAsText(`See below.\n\n${ref}`), "See below.\n\n[Saved map, always current: APARTMENTS/Maps/Shortlisted flats.md]");
 });

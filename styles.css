@@ -298,7 +298,11 @@ body.cd-font-text { --cd-font: var(--font-text); }
 
 /* ---------- maps ---------- */
 .cd-map { margin: 6px 0; }
-.cd-map-title { font-size: var(--cd-ui); font-weight: 600; margin-bottom: 4px; }
+.cd-map-title { display: flex; align-items: center; gap: 8px; font-size: var(--cd-ui); font-weight: 600; margin-bottom: 4px; }
+.cd-map-saved { font-size: var(--cd-meta); font-weight: 400; color: var(--text-faint); }
+.cd-map-save { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--cd-meta); font-weight: 400; color: var(--text-faint); cursor: pointer; padding: 1px 6px; border-radius: var(--radius-s); }
+.cd-map-save:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.cd-map-save svg { width: 13px; height: 13px; }
 .cd-map-box { position: relative; z-index: 0; height: 300px; border-radius: var(--radius-m); border: 1px solid var(--background-modifier-border); overflow: hidden; }
 .cd-map.is-active .cd-map-box { border-color: var(--cd-color, var(--interactive-accent)); }
 .cd-map .leaflet-container { font: inherit; font-size: var(--cd-meta); background: var(--background-secondary); }
@@ -313,3 +317,13 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-map-popup-name { font-weight: 600; }
 .cd-map-popup a { display: inline-block; margin-top: 3px; }
 .cd-note.is-flash { outline: 2px solid var(--cd-color); outline-offset: 2px; }
+
+/* ---------- calendar events ---------- */
+.cd-event { border: 1px solid var(--background-modifier-border); border-left: 3px solid var(--cd-color, var(--interactive-accent)); border-radius: 0 var(--radius-m) var(--radius-m) 0; padding: 7px 10px; margin: 6px 0; background: var(--background-primary); max-width: 460px; }
+.cd-event-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.cd-event-icon { display: inline-flex; color: var(--cd-color, var(--interactive-accent)); }
+.cd-event-icon svg { width: 15px; height: 15px; }
+.cd-event-when { color: var(--text-muted); font-size: var(--cd-ui); margin-top: 1px; }
+.cd-event-notes { color: var(--text-muted); font-size: var(--cd-meta); margin-top: 3px; white-space: pre-wrap; }
+.cd-event-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.cleardesk button.cd-event-add, button.cd-event-add { font-size: var(--cd-meta); height: auto; padding: 3px 10px; cursor: pointer; }

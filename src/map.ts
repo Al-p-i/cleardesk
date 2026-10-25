@@ -5,6 +5,8 @@
 //   {"title":"Shortlisted flats","places":[{"name":"Oranienstr. 12","lat":52.501,"lng":13.418,"color":"green"}], ...}
 //   ```
 
+import { EVENT_BLOCK, eventText, parseEvent } from "./calendar";
+
 export const MAP_BLOCK = "cleardesk-map";
 
 export const MAP_COLORS = ["green", "red", "blue", "orange", "purple", "grey"] as const;
@@ -31,6 +33,42 @@ export const asColor = (c: unknown): MapColor => (MAP_COLORS.includes(c as MapCo
 
 export function mapBlock(spec: MapSpec): string {
   return "```" + MAP_BLOCK + "\n" + JSON.stringify(spec) + "\n```";
+}
+
+/** A saved map in the project: `Maps/<title>.md`, with the map and a readable list of what's on it. */
+export const MAPS_DIR = "Maps";
+
+export function mapFileName(title: string): string {
+  const clean = title.replace(/[\\/:*?"<>|#^[\]]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  return `${MAPS_DIR}/${clean || "Map"}.md`;
+}
+
+export function mapFile(spec: MapSpec): string {
+  const list = mapText(spec).split("\n").slice(1).join("\n");
+  // A heading first: Obsidian shows a code block's source while the cursor is in it, and a
+  // newly opened file puts the cursor on the first line.
+  return `# ${spec.title || "Map"}\n\n${mapBlock(spec)}\n\nOn this map (kept up to date by ClearDesk; ask Claude to change it):\n\n${list}\n`;
+}
+
+/** In a chat reply: shows the saved map's current state, wherever it's drawn. */
+export function mapRef(path: string): string {
+  return "```" + MAP_BLOCK + "\n" + JSON.stringify({ file: path }) + "\n```";
+}
+
+/** The vault path a map block points to, if it's a reference to a saved map. */
+export function mapRefPath(src: string): string | null {
+  try {
+    const o = JSON.parse(src);
+    return o && typeof o.file === "string" ? o.file : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The first map in a note (a saved map file). */
+export function mapInNote(text: string): MapSpec | null {
+  const m = new RegExp("```" + MAP_BLOCK + "\\n([\\s\\S]*?)\\n```").exec(text);
+  return m ? parseMap(m[1]) : null;
 }
 
 /** A saved map block's source back into a spec (tolerant of missing fields). */
@@ -65,12 +103,18 @@ export function mapText(spec: MapSpec): string {
   return lines.join("\n");
 }
 
-const BLOCK_RE = new RegExp("```" + MAP_BLOCK + "\\n([\\s\\S]*?)\\n```", "g");
+const BLOCK_RE = new RegExp("```(" + MAP_BLOCK + "|" + EVENT_BLOCK + ")\\n([\\s\\S]*?)\\n```", "g");
 
-/** Replace every map block in a message with its text form. */
-export function mapsAsText(body: string): string {
-  if (!body.includes("```" + MAP_BLOCK)) return body;
-  return body.replace(BLOCK_RE, (_, src: string) => {
+/** Replace every map and calendar-event block in a message with its text form. */
+export function blocksAsText(body: string): string {
+  if (!body.includes("```" + MAP_BLOCK) && !body.includes("```" + EVENT_BLOCK)) return body;
+  return body.replace(BLOCK_RE, (_, kind: string, src: string) => {
+    if (kind === EVENT_BLOCK) {
+      const ev = parseEvent(src);
+      return ev ? `[${eventText(ev)}]` : "[Calendar event]";
+    }
+    const file = mapRefPath(src);
+    if (file) return `[Saved map, always current: ${file}]`;
     const spec = parseMap(src);
     return spec ? `[${mapText(spec)}]` : "[Map]";
   });

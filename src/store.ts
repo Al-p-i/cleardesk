@@ -1,6 +1,6 @@
 import { App, TFile, TFolder, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import { AttachIndex, fingerprint, fingerprintSize, fpOf, parseIndex, rewriteLinks } from "./relink";
-import { mapsAsText } from "./map";
+import { blocksAsText } from "./map";
 import {
   Entry, Task, appendEntry, appendTasks, isoDateTime, matchesAll, monthKey, moveEntry, newId, parseEntries, parseTasks,
   shiftEntry, splitEmbeds, splitFrontmatter, updateEntry, updateTask,
@@ -373,7 +373,7 @@ export class Store {
       for (const path of this.allChatPaths(folder)) {
         const chat = chatOfPath(path)?.chat ?? MAIN;
         for (const e of await this.chatEntries(path)) {
-          if ((e.kind === "me" || e.kind === "ai") && matchesAll(mapsAsText(splitEmbeds(e.body).text), words)) out.push({ folder, chat, entry: e });
+          if ((e.kind === "me" || e.kind === "ai") && matchesAll(blocksAsText(splitEmbeds(e.body).text), words)) out.push({ folder, chat, entry: e });
         }
       }
     }

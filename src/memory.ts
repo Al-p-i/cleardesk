@@ -3,7 +3,7 @@
 // Pure functions, so they can be unit-tested.
 
 import { Entry, feedOrder, matchesAll, queryWords } from "./format";
-import { mapsAsText } from "./map";
+import { blocksAsText } from "./map";
 
 /** How many unpinned items Claude sees; the panel draws its line after them. */
 export const CONTEXT_ITEMS = 30;
@@ -56,7 +56,7 @@ export function noteLine(e: Entry, max = 1500): string {
   const flags = [e.meta.pinned === "true" ? "pinned" : "", e.meta["replaced-by"] ? `replaced by ${e.meta["replaced-by"]}` : ""]
     .filter(Boolean)
     .join(", ");
-  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${cut(mapsAsText(e.body), max)}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
+  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${cut(blocksAsText(e.body), max)}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
 }
 
 /**

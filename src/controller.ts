@@ -13,7 +13,8 @@ import { filesSummary, historySize, noteLine, notesContext, sameStatement, searc
 /** Long notes are cut in the context sent with every message (search_notes shows up to 1,500). */
 const CONTEXT_NOTE_CHARS = 600;
 import { Geocoder, mapReport, resolveMap } from "./geo";
-import { MAP_COLORS, mapBlock, mapsAsText } from "./map";
+import { eventBlock, eventFromInput, eventWhen } from "./calendar";
+import { MAP_COLORS, mapBlock, mapFile, mapFileName, mapRef, blocksAsText } from "./map";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -194,7 +195,7 @@ export class Controller {
       return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data }, title: f.name }];
     }
     if (TEXT_TYPES.includes(ext)) {
-      const text = await this.store.read(f.path);
+      const text = blocksAsText(await this.store.read(f.path));
       const body = text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
       return [{ type: "text", text: `${label}:\n\n${body}` }];
     }
@@ -300,6 +301,7 @@ export class Controller {
     // Saved under the reply. A second map with the same title replaces the first (Claude
     // sometimes retries with better addresses); maps with other titles are kept.
     const maps = new Map<string, string>();
+    const events: string[] = []; // calendar-event cards, shown after the maps
     let live = "";
     let status = "";
     const push = () => this.onStream?.(project.folder, chat, live, status);
@@ -465,7 +467,7 @@ export class Controller {
           const titles = new Map((await this.store.listChats(project.folder)).map((c) => [c.id, c.title]));
           const where = (c: string) => (c === chat ? "this chat" : c === MAIN ? "Main chat" : `chat "${titles.get(c) ?? c}"`);
           return hits.length
-            ? hits.map(({ chat: c, entry: e }) => `${e.datetime} (${where(c)}) ${e.kind === "me" ? "owner" : "you"}: ${mapsAsText(e.body).slice(0, 400)}`).join("\n")
+            ? hits.map(({ chat: c, entry: e }) => `${e.datetime} (${where(c)}) ${e.kind === "me" ? "owner" : "you"}: ${blocksAsText(e.body).slice(0, 400)}`).join("\n")
             : "Nothing found. Try fewer or different words.";
         }
         case "create_document": {
@@ -474,6 +476,12 @@ export class Controller {
           await this.store.modify(path, () => md + "\n", tx);
           receipts.push(`📄 Created [[${path.replace(/\.md$/, "")}|${s("title")}]]`);
           return `Created ${path.slice(project.folder.length + 1)}.`;
+        }
+        case "add_calendar_event": {
+          const ev = eventFromInput(input);
+          if ("error" in ev) return ev.error;
+          events.push(eventBlock(ev));
+          return `An event card (${eventWhen(ev)}) appears under your reply; the owner adds it to Google or Apple Calendar with one click. You can't see their calendar or whether they added it.`;
         }
         case "show_map": {
           const geo = new Geocoder(this.store, project.folder);
@@ -484,8 +492,21 @@ export class Controller {
           await geo.save();
           const key = spec.title.toLowerCase();
           const replaced = maps.has(key);
-          if (spec.places.length || spec.areas.length || spec.circles.length || spec.lines.length) maps.set(key, mapBlock(spec));
-          return (replaced ? "This replaces your earlier map with the same title. " : "") + mapReport(spec, geo.failed);
+          const shown = spec.places.length || spec.areas.length || spec.circles.length || spec.lines.length;
+          const report = (replaced ? "This replaces your earlier map with the same title. " : "") + mapReport(spec, geo.failed);
+          if (!shown) return report;
+          if (input.save !== true && input.save !== "true") {
+            maps.set(key, mapBlock(spec));
+            return report;
+          }
+          // A saved map is a project file shared by all chats; the reply shows it live.
+          const at = projectPath(project.folder, mapFileName(spec.title));
+          if ("error" in at) return at.error;
+          const existed = !!this.store.file(at.path);
+          await this.store.modify(at.path, () => mapFile(spec), tx);
+          receipts.push(`🗺 Map ${existed ? "updated" : "saved"} · [[${at.path.replace(/\.md$/, "")}|${spec.title || "Map"}]]`);
+          maps.set(key, mapRef(at.path));
+          return `${report} ${existed ? "Updated" : "Saved as"} ${relPath(project.folder, at.path)}, shared by all chats.`;
         }
       }
       return `Unknown tool ${name}.`;
@@ -502,7 +523,7 @@ export class Controller {
         onText: (d) => { live += d; status = ""; push(); },
         onTool: (name) => { status = TOOL_STATUS[name] ?? "Working…"; push(); },
       });
-      const body = [reply, ...maps.values()].filter(Boolean).join("\n\n");
+      const body = [reply, ...maps.values(), ...events].filter(Boolean).join("\n\n");
       if (body) await this.store.appendChat(project.folder, "ai", body, {}, chat);
     } finally {
       this.busy.delete(busyKey);
@@ -533,7 +554,7 @@ export class Controller {
           ? `[Filed: ${e.body}]`
           : e.kind === "me"
             ? attachmentNote(e.body, project.folder)
-            : mapsAsText(e.body);
+            : blocksAsText(e.body);
       const last = msgs[msgs.length - 1];
       if (last && last.role === role) last.text += "\n\n" + text;
       else msgs.push({ role, text });
@@ -659,7 +680,8 @@ How the workspace works:
 - Documents: when asked for a document (comparison, plan, calculation), call create_document with a precise, complete brief; it runs real code for calculations. Use read_file to read files in the project folder (text, markdown, PDF and images) and search_chat to find something said earlier that isn't in the recent conversation.
 - Organising files: use list_files to see the project's folders, create_folder to add folders, and move_file to move or rename files and folders (it never overwrites, and links to moved files are updated). Everything is limited to this project's folder; ClearDesk's own _project folder can't be touched, and nothing can be deleted. To name photos well, look at them with read_file first. Before reorganising more than a few files, say in one line what you'll do, then do it.
 - Google links: for docs.google.com and drive.google.com links always use read_google_doc, never web_fetch (web_fetch only sees an empty preview of Google Docs). A Docs link without a tab returns all tabs; with ?tab= it returns that tab only, so if the owner asks about another part of the document, read the link again without the tab parameter. Private files can't be opened: suggest sharing as "Anyone with the link can view", or downloading into the project folder.
-- Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map; in the same reply, a map with the same title replaces the earlier one. The map appears under your reply, so don't list coordinates.
+- Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map; in the same reply, a map with the same title replaces the earlier one. The map appears under your reply, so don't list coordinates. When the owner wants to keep or track a map, or a saved map with that title exists (Maps/ in the files overview), use save: true: it creates or updates Maps/<title>.md, which every chat shares and the owner can open. To change a saved map, read it with read_file first if its places aren't in the conversation, then send the full updated map with the same title.
+- Calendar: when the owner asks to put something in their calendar (a viewing, a call, a trip), call add_calendar_event once per event, with dates and 24-hour times in their local time. It shows a card with Google Calendar and Apple Calendar buttons; the owner adds it themselves. Never create events they didn't ask for, and don't add a task as well unless they ask.
 - The web: when web_search and web_fetch are available, use them for current information and to read other links the owner pastes.
 
 Reply briefly and directly, in plain language. When you only filed something, a short confirmation or no text at all is fine: the app shows a receipt for every change.`;
@@ -696,6 +718,7 @@ const TOOL_STATUS: Record<string, string> = {
   search_chat: "Searching the chat…",
   create_document: "Writing the document… (can take a minute)",
   show_map: "Making the map…",
+  add_calendar_event: "Preparing the event…",
 };
 
 // Strict (schema-guaranteed input) only for tools that change things: the API compiles all
@@ -778,6 +801,15 @@ const TOOLS: BetaTool[] = [
   tool("search_chat", "Search the full chat history of this project. Every word must appear in a message.", {
     query: { type: "string", description: "A few distinctive words to look for." },
   }, false),
+  tool("add_calendar_event", "Prepare a calendar event that the owner adds to Google or Apple Calendar with one click. Only when the owner asks to put something in their calendar.", {
+    title: { type: "string", description: "Short event title, e.g. Viewing Oranienstr. 12." },
+    date: { type: "string", description: "Start date, YYYY-MM-DD." },
+    end_date: { type: "string", description: "Last date for multi-day events (YYYY-MM-DD), or empty string for a one-day event." },
+    start_time: { type: "string", description: "Local start time HH:MM (24-hour), or empty string for an all-day event." },
+    end_time: { type: "string", description: "Local end time HH:MM, or empty string for one hour after the start." },
+    location: { type: "string", description: "Address or place, or empty string." },
+    notes: { type: "string", description: "Short details for the event, or empty string." },
+  }, false), // checks its own input (eventFromInput), keeping the strict grammar small
   tool("create_document", "Write a new markdown document into the project folder. Takes up to a minute.", {
     title: { type: "string", description: "Document title, also the file name." },
     brief: { type: "string", description: "Everything the document must contain, and which facts to use." },
@@ -835,5 +867,9 @@ TOOLS.push({
       }),
     },
     legend: { type: "array", items: obj({ color, label: str("What this colour means.") }) },
+    save: {
+      type: "boolean",
+      description: "true to keep this as the project map file Maps/<title>.md (creating it, or updating the saved map with this title); false for a one-off map in the chat.",
+    },
   }),
 } as BetaTool);

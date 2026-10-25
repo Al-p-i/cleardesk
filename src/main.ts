@@ -1,4 +1,4 @@
-import { Events, Notice, Plugin, TAbstractFile, TFolder, WorkspaceLeaf, debounce } from "obsidian";
+import { Events, FileSystemAdapter, Notice, Platform, Plugin, TAbstractFile, TFolder, WorkspaceLeaf, debounce } from "obsidian";
 import { Ai, AiSettings, DEFAULT_AI, keyProblem } from "./ai";
 import { Controller } from "./controller";
 import { newId, taskCounts } from "./format";
@@ -9,8 +9,12 @@ import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
 import { ImportModal, NewProjectModal, RepairModal } from "./modals";
 import { LinkKeeper } from "./linkkeeper";
-import { MAP_BLOCK, parseMap } from "./map";
+import { MAP_BLOCK, MapSpec, mapFile, mapFileName, mapRefPath, parseMap } from "./map";
+import { projectPath, relPath } from "./paths";
 import { MapChild } from "./views/map";
+import { CalEvent, EVENT_BLOCK, googleCalendarUrl, icsFile, parseEvent } from "./calendar";
+import { renderEventCard } from "./views/event";
+import { openExternal } from "./views/links";
 import { ClearDeskSettingTab } from "./settings";
 
 interface Settings extends AiSettings {
@@ -70,10 +74,31 @@ export default class ClearDesk extends Plugin {
     this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
     this.registerView(PANEL_VIEW, (leaf) => new PanelView(leaf, this));
     // Maps Claude shows in chat; they also draw wherever the block appears in the vault.
+    // Calendar events Claude prepared: a card with a button per calendar.
+    this.registerMarkdownCodeBlockProcessor(EVENT_BLOCK, (src, el, ctx) => {
+      const ev = parseEvent(src);
+      if (!ev) {
+        el.createDiv({ cls: "cd-muted", text: "This event couldn't be read." });
+        return;
+      }
+      renderEventCard(el, ev, {
+        google: () => openExternal(googleCalendarUrl(ev, Intl.DateTimeFormat().resolvedOptions().timeZone)),
+        apple: Platform.isDesktopApp ? () => this.openInAppleCalendar(ctx.sourcePath, ev) : undefined,
+      });
+    });
     this.registerMarkdownCodeBlockProcessor(MAP_BLOCK, (src, el, ctx) => {
-      const spec = parseMap(src);
-      if (!spec) el.createDiv({ cls: "cd-muted", text: "This map couldn't be read." });
-      else ctx.addChild(new MapChild(el, spec, (id) => this.revealNote(ctx.sourcePath, id)));
+      const file = mapRefPath(src);
+      const spec = file ? null : parseMap(src);
+      if (!file && !spec) {
+        el.createDiv({ cls: "cd-muted", text: "This map couldn't be read." });
+        return;
+      }
+      const inMapFile = /\/Maps\/[^/]+\.md$/.test(ctx.sourcePath);
+      ctx.addChild(new MapChild(el, file ? { file } : { spec: spec! }, {
+        app: this.app,
+        openNote: (id) => this.revealNote(ctx.sourcePath, id),
+        save: inMapFile ? undefined : (s) => this.saveMap(ctx.sourcePath, s),
+      }));
     });
 
     this.addRibbonIcon("messages-square", "Open ClearDesk", () => this.openWorkspace());
@@ -402,6 +427,36 @@ export default class ClearDesk extends Plugin {
     const view = leaf.view as unknown as ChatView;
     view.focusInput?.();
     return view;
+  }
+
+  /** Open a calendar event in Apple Calendar (desktop): write it as an .ics file and open that. */
+  async openInAppleCalendar(sourcePath: string, ev: CalEvent) {
+    const p = this.projects.find((x) => sourcePath === x.folder || sourcePath.startsWith(x.folder + "/"));
+    const folder = p ? `${p.folder}/_project/events` : ".cleardesk-events";
+    // The same event always gets the same id, so a second click updates it instead of adding a copy.
+    let h = 0x811c9dc5;
+    for (const ch of JSON.stringify(ev)) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+    const uid = `e-${h.toString(36)}`;
+    const path = `${folder}/${uid}.ics`;
+    await this.store.modify(path, () => icsFile(ev, uid));
+    const adapter = this.app.vault.adapter;
+    const open = (this.app as unknown as { openWithDefaultApp?: (p: string) => Promise<void> }).openWithDefaultApp;
+    if (open) await open.call(this.app, path);
+    else if (adapter instanceof FileSystemAdapter) {
+      const electron = (window as unknown as { require?: (m: string) => { shell: { openPath(p: string): Promise<string> } } }).require?.("electron");
+      await electron?.shell.openPath(adapter.getFullPath(path));
+    } else new Notice("Couldn't open Apple Calendar here. Use the Google Calendar button, or add it from your Mac.");
+  }
+
+  /** "Save to project" on a map in the chat: keep it as Maps/<title>.md in its project. */
+  async saveMap(sourcePath: string, spec: MapSpec) {
+    const p = this.projects.find((x) => sourcePath === x.folder || sourcePath.startsWith(x.folder + "/"));
+    if (!p) return;
+    const at = projectPath(p.folder, mapFileName(spec.title));
+    if ("error" in at) return new Notice(at.error);
+    if (this.store.file(at.path) && !window.confirm(`Replace the saved map "${spec.title || "Map"}"?`)) return;
+    await this.store.modify(at.path, () => mapFile(spec));
+    new Notice(`Map saved: ${relPath(p.folder, at.path)}`);
   }
 
   /** Show a note or fact in the panel (from a map pin), switching to its project first. */

@@ -31,7 +31,8 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 - **Attachments**: paste, drop or pick images, PDFs and text files; Claude reads them.
 - **Web and Google**: Claude can search the web and read pasted links, including Google Docs, Sheets and Slides shared via link.
 - **Documents**: ask for a comparison, plan or calculation and Claude writes it into the project folder, running real code for the maths.
-- **Maps**: ask to see places on a map ("show the shortlisted flats on a map") and Claude draws one in its reply: coloured pins with details, shaded neighbourhood outlines, distance circles, lines and a legend. Maps are saved in the chat, so they redraw on any device without looking anything up again.
+- **Maps**: ask to see places on a map ("show the shortlisted flats on a map") and Claude draws one in its reply: coloured pins with details, shaded neighbourhood outlines, distance circles, lines and a legend. Maps are saved in the chat, so they redraw on any device without looking anything up again. Ask Claude to keep a map (or click **Save to project** on one) and it becomes a file, `Maps/<title>.md`, shared by every chat: Claude updates it when you ask, and the chat always shows its current state.
+- **Calendar**: ask Claude to put something in your calendar and it prepares the event as a card in the chat, with **Google Calendar** and **Apple Calendar** buttons (Apple on desktop). You add it with one click; ClearDesk doesn't read or change your calendars.
 - **File organising**: ask Claude to sort photos and files; it can list, create folders, and move or rename within the project folder only (never deleting, never overwriting, never touching `_project/`), with one-click undo.
 - **Links that survive moves**: attachment links follow files that are moved or renamed in Obsidian; a fingerprint of every attached file lets ClearDesk find it again even after moves elsewhere, and a repair command (with preview) fixes older broken links.
 - **Chat search** across one or all projects, with message times on hover.
@@ -54,6 +55,7 @@ ClearDesk isn't in the Obsidian community store yet.
   - **Anthropic's API** (`api.anthropic.com`) when you chat, use `/t` or `/n` with a key set, or ask for a document. Web searches and page reading requested by the AI run through Anthropic.
   - **Google** (`docs.google.com`, `drive.google.com`) when the AI reads a Google Doc, Sheet, Slides deck or Drive file from a link you shared.
   - **The pages you paste links to**, once each, to fetch their titles for saved links.
+  - **Google Calendar** (`calendar.google.com`), only when you click an event's Google Calendar button: it opens in your browser with the event's details in the link. The Apple Calendar button opens a local .ics file and sends nothing.
   - **OpenStreetMap**, only for maps: place names and addresses on a map are looked up with its Nominatim service (`nominatim.openstreetmap.org`, at most one per second, then cached in the project), and map images come from `tile.openstreetmap.org`, which sees the area you're viewing. Map data © OpenStreetMap contributors.
 - No telemetry, no analytics, and no other servers.
 

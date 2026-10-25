@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { Controller } from "../../src/controller";
 import { Store } from "../../src/store";
-import { parseMap } from "../../src/map";
+import { mapInNote, parseMap } from "../../src/map";
 import { calls, script } from "./obsidian-stub";
 
 const files = new Map<string, string>();
@@ -11,6 +11,7 @@ const store = new Store({} as any);
 const chat: any[] = [];
 Object.assign(store, {
   read: async (p: string) => files.get(p) ?? "",
+  file: (p: string) => (files.has(p) ? { path: p } : null),
   modify: async (p: string, fn: (t: string) => string) => { files.set(p, fn(files.get(p) ?? "")); },
   readMeta: async () => ({ color: "", goal: "", status: "", order: 0, key_facts: [] }),
   tasks: async () => [], notes: async () => [], projectFiles: () => [], recentChat: async () => chat,
@@ -107,7 +108,7 @@ console.log("map lookup failure ok");
 // ("compiled grammar is too large"): only the tools that change things are strict.
 const strict = tools.filter((t) => t.strict).map((t) => t.name);
 assert.ok(strict.length <= 15, `strict tools: ${strict.join(", ")}`);
-for (const t of ["show_map", "read_file", "list_files", "search_notes", "search_chat", "read_google_doc"]) assert.ok(!strict.includes(t), `${t} isn't strict`);
+for (const t of ["show_map", "read_file", "list_files", "search_notes", "search_chat", "read_google_doc", "add_calendar_event"]) assert.ok(!strict.includes(t), `${t} isn't strict`);
 for (const t of tools.filter((x) => x.strict)) {
   const s = t.input_schema;
   assert.deepEqual(s.required, Object.keys(s.properties), `${t.name}: no optional parameters`);
@@ -150,3 +151,48 @@ const blocks = body.match(/```cleardesk-map\n(.*?)\n```/gs)!.map((b: string) => 
 assert.deepEqual(blocks.map((b: any) => [b.title, b.places.length]), [["Must-sees", 3], ["Food", 1]]);
 assert.match(report, /^This replaces your earlier map/);
 console.log("repeated map replaced ok");
+
+// save: true keeps the map as a project file shared by all chats; the reply refers to it.
+const saver: any = {
+  configured: true, webAccess: false,
+  chat: async ({ exec }: any) => {
+    report = await exec("show_map", { title: "Flats", save: true, places: [{ name: "A", address: "52.50, 13.40", color: "green", details: "€1,450" }] });
+    return "Saved.";
+  },
+};
+const c3 = new Controller(store, saver, () => {});
+await c3.send(project, "keep a map of the flats");
+const saved = files.get("APARTMENTS/Maps/Flats.md")!;
+assert.deepEqual(mapInNote(saved)!.places.map((p) => p.name), ["A"]);
+assert.match(saved, /- A \(green\): €1,450/);
+assert.match(report, /Saved as Maps\/Flats\.md, shared by all chats/);
+const savedReply = chat.filter((e) => e.kind === "ai").pop()!.body;
+assert.equal(savedReply, "Saved.\n\n```cleardesk-map\n{\"file\":\"APARTMENTS/Maps/Flats.md\"}\n```", "the reply shows the saved map live");
+assert.match(chat.filter((e) => e.kind === "receipt").pop()!.body, /🗺 Map saved · \[\[APARTMENTS\/Maps\/Flats\|Flats\]\]/);
+// Updating it (same title) rewrites the same file.
+saver.chat = async ({ exec }: any) => {
+  report = await exec("show_map", { title: "Flats", save: true, places: [{ name: "A", address: "52.50, 13.40", color: "red" }, { name: "B", address: "52.51, 13.41", color: "green" }] });
+  return "Updated.";
+};
+await c3.send(project, "mark A as rejected and add B");
+assert.deepEqual(mapInNote(files.get("APARTMENTS/Maps/Flats.md")!)!.places.map((p) => [p.name, p.color]), [["A", "red"], ["B", "green"]]);
+assert.match(report, /Updated Maps\/Flats\.md/);
+assert.match(chat.filter((e) => e.kind === "receipt").pop()!.body, /🗺 Map updated/);
+console.log("saved project map ok");
+
+// add_calendar_event: a card under the reply; bad input goes back to Claude to fix.
+let eventReport = "", badReport = "";
+const cal: any = {
+  configured: true, webAccess: false,
+  chat: async ({ exec }: any) => {
+    badReport = await exec("add_calendar_event", { title: "Viewing", date: "Thursday", start_time: "", end_time: "", end_date: "", location: "", notes: "" });
+    eventReport = await exec("add_calendar_event", { title: "Viewing", date: "2026-10-29", start_time: "18:00", end_time: "", end_date: "", location: "Oranienstr. 12", notes: "" });
+    return "Here's the viewing.";
+  },
+};
+await new Controller(store, cal, () => {}).send(project, "put the viewing on thursday at 6 in my calendar");
+const calReply = chat.filter((e) => e.kind === "ai").pop()!.body;
+assert.equal(calReply, 'Here\'s the viewing.\n\n```cleardesk-event\n{"title":"Viewing","start":"2026-10-29T18:00","end":"2026-10-29T19:00","location":"Oranienstr. 12"}\n```');
+assert.match(badReport, /YYYY-MM-DD/);
+assert.match(eventReport, /Thu 29 Oct · 18:00–19:00/);
+console.log("calendar event card ok");

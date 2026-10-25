@@ -1,24 +1,78 @@
-// Draws a saved map (a cleardesk-map block) with Leaflet and OpenStreetMap tiles.
-import { MarkdownRenderChild, Platform } from "obsidian";
+// Draws a map (a cleardesk-map block) with Leaflet and OpenStreetMap tiles. A block is either
+// a map itself, or a reference to a saved map file, which is drawn live as that file changes.
+import { App, MarkdownRenderChild, Platform, TFile, debounce, setIcon } from "obsidian";
 import * as L from "leaflet";
-import { MapColor, MapSpec, distance } from "../map";
+import { MapColor, MapSpec, distance, mapInNote } from "../map";
 
 const HEX: Record<MapColor, string> = {
   green: "#2f9e44", red: "#e03131", blue: "#1c7ed6", orange: "#f08c00", purple: "#9c36b5", grey: "#868e96",
 };
 
+export interface MapActions {
+  app: App;
+  /** Show a note or fact a pin comes from. */
+  openNote?: (id: string) => void;
+  /** Keep a one-off map as a project map file (not offered inside a map file). */
+  save?: (spec: MapSpec) => void;
+}
+
 export class MapChild extends MarkdownRenderChild {
   private map?: L.Map;
   private resize?: ResizeObserver;
 
-  constructor(el: HTMLElement, private spec: MapSpec, private openNote?: (id: string) => void) {
+  constructor(el: HTMLElement, private source: { spec: MapSpec } | { file: string }, private actions: MapActions) {
     super(el);
   }
 
-  onload() {
-    const spec = this.spec;
+  async onload() {
+    if ("spec" in this.source) return this.draw(this.source.spec);
+    // A saved map: draw the file as it is now, and again whenever it changes.
+    const path = this.source.file;
+    const redraw = debounce(() => this.drawFile(path), 300, true);
+    this.registerEvent(this.actions.app.vault.on("modify", (f) => { if (f.path === path) redraw(); }));
+    await this.drawFile(path);
+  }
+
+  private async drawFile(path: string) {
+    const f = this.actions.app.vault.getAbstractFileByPath(path);
+    const spec = f instanceof TFile ? mapInNote(await this.actions.app.vault.cachedRead(f)) : null;
+    if (spec) return this.draw(spec, path);
+    this.clear();
+    this.containerEl.createDiv({ cls: "cd-map-note", text: `The saved map ${path} isn't there any more.` });
+  }
+
+  private clear() {
+    this.resize?.disconnect();
+    this.map?.remove();
+    this.map = undefined;
+    this.containerEl.empty();
+  }
+
+  private draw(spec: MapSpec, file?: string) {
+    this.clear();
     const root = this.containerEl.createDiv("cd-map");
-    if (spec.title) root.createDiv({ cls: "cd-map-title", text: spec.title });
+    const head = root.createDiv("cd-map-title");
+    if (file) {
+      // A saved map: its title opens the file.
+      const a = head.createEl("a", { cls: "internal-link", text: spec.title || "Map", attr: { "data-href": file, href: file } });
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.actions.app.workspace.openLinkText(file, "", "tab");
+      });
+      head.createSpan({ cls: "cd-map-saved", text: "saved map" });
+    } else {
+      head.createSpan({ text: spec.title });
+      if (this.actions.save) {
+        const save = head.createSpan({ cls: "cd-map-save", attr: { "aria-label": "Keep this map in the project's Maps folder" } });
+        setIcon(save.createSpan(), "bookmark-plus");
+        save.createSpan({ text: "Save to project" });
+        save.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this.actions.save!(spec);
+        });
+      }
+    }
     const box = root.createDiv("cd-map-box");
 
     // Inactive until clicked, so scrolling the chat never zooms or drags the map by accident.
@@ -92,9 +146,9 @@ export class MapChild extends MarkdownRenderChild {
         const el = createDiv("cd-map-popup");
         el.createDiv({ cls: "cd-map-popup-name", text: p.name });
         if (p.details) el.createDiv({ text: p.details });
-        if (p.note && this.openNote) {
+        if (p.note && this.actions.openNote) {
           const link = el.createEl("a", { text: "Open note", href: "#" });
-          link.addEventListener("click", (ev) => { ev.preventDefault(); this.openNote!(p.note!); });
+          link.addEventListener("click", (ev) => { ev.preventDefault(); this.actions.openNote!(p.note!); });
         }
         return el;
       });
