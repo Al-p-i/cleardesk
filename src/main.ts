@@ -9,6 +9,8 @@ import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
 import { ImportModal, NewProjectModal, RepairModal } from "./modals";
 import { LinkKeeper } from "./linkkeeper";
+import { MAP_BLOCK, parseMap } from "./map";
+import { MapChild } from "./views/map";
 import { ClearDeskSettingTab } from "./settings";
 
 interface Settings extends AiSettings {
@@ -63,6 +65,12 @@ export default class ClearDesk extends Plugin {
     this.registerView(PROJECTS_VIEW, (leaf) => new ProjectsView(leaf, this));
     this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
     this.registerView(PANEL_VIEW, (leaf) => new PanelView(leaf, this));
+    // Maps Claude shows in chat; they also draw wherever the block appears in the vault.
+    this.registerMarkdownCodeBlockProcessor(MAP_BLOCK, (src, el, ctx) => {
+      const spec = parseMap(src);
+      if (!spec) el.createDiv({ cls: "cd-muted", text: "This map couldn't be read." });
+      else ctx.addChild(new MapChild(el, spec, (id) => this.revealNote(ctx.sourcePath, id)));
+    });
 
     this.addRibbonIcon("messages-square", "Open ClearDesk", () => this.openWorkspace());
     this.addCommand({ id: "open", name: "Open workspace", callback: () => this.openWorkspace() });
@@ -389,6 +397,18 @@ export default class ClearDesk extends Plugin {
     const view = leaf.view as unknown as ChatView;
     view.focusInput?.();
     return view;
+  }
+
+  /** Show a note or fact in the panel (from a map pin), switching to its project first. */
+  async revealNote(sourcePath: string, id: string) {
+    const p = this.projects.find((x) => sourcePath === x.folder || sourcePath.startsWith(x.folder + "/"));
+    if (p && p.folder !== this.settings.active) await this.setActive(p.folder);
+    const ws = this.app.workspace;
+    if (!ws.getLeavesOfType(PANEL_VIEW).length) await this.openWorkspace();
+    const leaf = ws.getLeavesOfType(PANEL_VIEW)[0];
+    if (!leaf) return;
+    await ws.revealLeaf(leaf);
+    await (leaf.view as PanelView).revealNote(id);
   }
 
   /** Open the chat and scroll to a message (used by note/task "source" links). */

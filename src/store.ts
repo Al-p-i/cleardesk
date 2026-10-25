@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import { AttachIndex, fingerprint, fingerprintSize, fpOf, parseIndex, rewriteLinks } from "./relink";
+import { mapsAsText } from "./map";
 import {
   Entry, Task, appendEntry, appendTasks, isoDateTime, matchesAll, monthKey, moveEntry, newId, parseEntries, parseTasks,
   shiftEntry, splitEmbeds, splitFrontmatter, updateEntry, updateTask,
@@ -58,6 +59,7 @@ export function projectPaths(folder: string) {
     tasks: `${sys}/tasks.md`,
     notes: `${sys}/notes.md`,
     attachments: `${sys}/attachments.json`,
+    places: `${sys}/places.json`,
     chatDir: `${sys}/chat`,
     chat: (month: string) => `${sys}/chat/${month}.md`,
   };
@@ -289,7 +291,7 @@ export class Store {
     for (const { folder, month } of all) {
       const entries = (await this.chat(folder, month)).filter((e) => e.kind === "me" || e.kind === "ai");
       for (const e of entries) {
-        if (matchesAll(splitEmbeds(e.body).text, words)) out.push({ folder, entry: e });
+        if (matchesAll(mapsAsText(splitEmbeds(e.body).text), words)) out.push({ folder, entry: e });
       }
     }
     out.sort((a, b) => b.entry.datetime.localeCompare(a.entry.datetime));

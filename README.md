@@ -29,6 +29,7 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 - **Attachments**: paste, drop or pick images, PDFs and text files; Claude reads them.
 - **Web and Google**: Claude can search the web and read pasted links, including Google Docs, Sheets and Slides shared via link.
 - **Documents**: ask for a comparison, plan or calculation and Claude writes it into the project folder, running real code for the maths.
+- **Maps**: ask to see places on a map ("show the shortlisted flats on a map") and Claude draws one in its reply: coloured pins with details, shaded neighbourhood outlines, distance circles, lines and a legend. Maps are saved in the chat, so they redraw on any device without looking anything up again.
 - **File organising**: ask Claude to sort photos and files; it can list, create folders, and move or rename within the project folder only (never deleting, never overwriting, never touching `_project/`), with one-click undo.
 - **Links that survive moves**: attachment links follow files that are moved or renamed in Obsidian; a fingerprint of every attached file lets ClearDesk find it again even after moves elsewhere, and a repair command (with preview) fixes older broken links.
 - **Chat search** across one or all projects, with message times on hover.
@@ -51,11 +52,12 @@ ClearDesk isn't in the Obsidian community store yet.
   - **Anthropic's API** (`api.anthropic.com`) when you chat, use `/t` or `/n` with a key set, or ask for a document. Web searches and page reading requested by the AI run through Anthropic.
   - **Google** (`docs.google.com`, `drive.google.com`) when the AI reads a Google Doc, Sheet, Slides deck or Drive file from a link you shared.
   - **The pages you paste links to**, once each, to fetch their titles for saved links.
+  - **OpenStreetMap**, only for maps: place names and addresses on a map are looked up with its Nominatim service (`nominatim.openstreetmap.org`, at most one per second, then cached in the project), and map images come from `tile.openstreetmap.org`, which sees the area you're viewing. Map data © OpenStreetMap contributors.
 - No telemetry, no analytics, and no other servers.
 
 ## Privacy and cost
 
-- When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand. Nothing is sent anywhere else, except fetching titles of links you paste and Google exports of links you ask about.
+- When you chat, the current project's content (goal, key facts, tasks, pinned and recent notes, recent chat, file names, and any attachments you send) goes to Anthropic's API; older notes are searched on demand. Nothing is sent anywhere else, except fetching titles of links you paste, Google exports of links you ask about, and OpenStreetMap lookups of the places on maps you ask for.
 - Your API key is stored in the vault's plugin data (`.obsidian/plugins/cleardesk/data.json`). Don't commit or share that file.
 - API usage is billed by Anthropic. Chat uses Claude Opus 5.5 at low effort by default; `/t` and `/n` filing uses the much cheaper Claude Haiku 5.5. You can change both models in settings, and setting a spend limit on the Claude platform is a good idea.
 
@@ -69,7 +71,9 @@ APARTMENTS/
     project.md        colour, goal, status, order, key facts (frontmatter)
     tasks.md          - [ ] Send payslips 🔗 [[source]] 📅 2026-10-20 ^t-k2j3a   (Obsidian Tasks format)
     notes.md          ### 2026-10-17 15:10 · note · Kreuzberg ^n-k3j2a  + text
-    chat/2026-10.md   ### 2026-10-17 14:32 · me ^m-abc123  + message
+    chat/2026-10.md   ### 2026-10-17 14:32 · me ^m-abc123  + message (maps are ```cleardesk-map blocks in replies)
+    places.json       places already found for maps, so they aren't looked up twice
+    attachments.json  fingerprints of attached files, to find them after moves
   Attachments/        files you add in the chat
   …your documents
 ```
@@ -102,3 +106,5 @@ Then reload ClearDesk in Obsidian (switch it off and on).
 ## License
 
 [MIT](LICENSE)
+
+Maps use [Leaflet](https://leafletjs.com) (BSD-2-Clause, bundled) and map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.

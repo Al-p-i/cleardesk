@@ -5,6 +5,7 @@ import { CommandKind, blockOpener, parseMessage } from "../input";
 import { appendLinkified, openExternal } from "./links";
 import { isClosed } from "../store";
 import { isImageName, renderAttachments } from "./attachments";
+import { mapsAsText } from "../map";
 
 export const CHAT_VIEW = "cleardesk-chat";
 
@@ -310,7 +311,7 @@ export class ChatView extends ItemView {
       // A turn: the message, then a row with its time and copy, shown on hover (as in Claude).
       const turn = this.listEl.createDiv({ cls: `cd-turn cd-turn-${e.kind}`, attr: { "data-id": e.id } });
       const el = turn.createDiv(`cd-msg cd-${e.kind}`);
-      let copyText = e.body;
+      let copyText = mapsAsText(e.body);
       if (e.kind === "me") {
         const { text, files } = splitEmbeds(e.body);
         // Tasks and notes show a label instead of their /t or /n; copy gives only the text.
@@ -451,7 +452,7 @@ export class ChatView extends ItemView {
       meta.createSpan({ text: entry.kind === "me" ? "You" : "AI" });
       meta.createSpan({ text: whenLabel(entry.datetime) });
       const text = row.createDiv("cd-result-text");
-      for (const part of snippetParts(splitEmbeds(entry.body).text, words)) {
+      for (const part of snippetParts(mapsAsText(splitEmbeds(entry.body).text), words)) {
         if (part.hit) text.createEl("mark", { text: part.text });
         else text.appendText(part.text);
       }

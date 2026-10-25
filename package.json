@@ -1,19 +1,20 @@
 {
   "name": "cleardesk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "ClearDesk: a chat-first project workspace for Obsidian, powered by Claude.",
   "scripts": {
-    "build": "node esbuild.config.mjs && cp manifest.json styles.css build/",
+    "build": "node esbuild.config.mjs && cp manifest.json build/",
     "dev": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "deploy": "npm run build && node scripts/deploy.mjs",
-    "test:ai": "set -e; for h in ai-harness stream-harness attach-harness files-harness memory-harness; do esbuild test/harness/$h.ts --bundle --platform=node --format=esm --alias:obsidian=./test/harness/obsidian-stub.ts --outfile=test/harness/$h.mjs --log-level=warning; node test/harness/$h.mjs 2>/dev/null || { echo \"FAILED: $h\"; exit 1; }; done"
+    "test:ai": "set -e; for h in ai-harness stream-harness attach-harness files-harness memory-harness map-harness; do esbuild test/harness/$h.ts --bundle --platform=node --format=esm --alias:obsidian=./test/harness/obsidian-stub.ts --outfile=test/harness/$h.mjs --log-level=warning; node test/harness/$h.mjs 2>/dev/null || { echo \"FAILED: $h\"; exit 1; }; done"
   },
   "author": "Alexander (https://github.com/Al-p-i)",
   "license": "MIT",
   "type": "module",
   "devDependencies": {
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.5",
     "builtin-modules": "^5.4.0",
     "esbuild": "^0.28.2",
@@ -22,7 +23,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0"
+    "@anthropic-ai/sdk": "^0.135.0",
+    "leaflet": "^1.9.4"
   },
   "keywords": [
     "obsidian",

@@ -9,6 +9,8 @@ import { parseMessage } from "./input";
 import { KeyFact, Project, Store, Tx } from "./store";
 import { moveTarget, projectPath, relPath } from "./paths";
 import { filesSummary, noteLine, notesContext, sameStatement, searchNotes } from "./memory";
+import { Geocoder, MapInput, mapReport, resolveMap } from "./geo";
+import { MAP_COLORS, mapBlock, mapsAsText } from "./map";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
 type BetaMessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -269,6 +271,10 @@ export class Controller {
     const ctx = await this.context(project);
     const history = await this.history(project, me);
     const source = this.store.chatLink(project.folder, me);
+    const maps: string[] = []; // saved under the reply
+    let live = "";
+    let status = "";
+    const push = () => this.onStream?.(project.folder, live, status);
 
     // File operations run one at a time, even when the model asks for several at once.
     let fileQueue: Promise<unknown> = Promise.resolve();
@@ -393,7 +399,7 @@ export class Controller {
           // Same search as the chat's search bar: every word must appear.
           const hits = await this.store.searchChat([project.folder], queryWords(s("query")), 25);
           return hits.length
-            ? hits.map(({ entry: e }) => `${e.datetime} ${e.kind === "me" ? "owner" : "you"}: ${e.body.slice(0, 400)}`).join("\n")
+            ? hits.map(({ entry: e }) => `${e.datetime} ${e.kind === "me" ? "owner" : "you"}: ${mapsAsText(e.body).slice(0, 400)}`).join("\n")
             : "Nothing found. Try fewer or different words.";
         }
         case "create_document": {
@@ -403,14 +409,21 @@ export class Controller {
           receipts.push(`📄 Created [[${path.replace(/\.md$/, "")}|${s("title")}]]`);
           return `Created ${path.slice(project.folder.length + 1)}.`;
         }
+        case "show_map": {
+          const geo = new Geocoder(this.store, project.folder);
+          const spec = await resolveMap(input as unknown as MapInput, geo.find, (done, total) => {
+            status = `Finding places… ${done} of ${total}`;
+            push();
+          });
+          await geo.save();
+          if (spec.places.length || spec.areas.length || spec.circles.length || spec.lines.length) maps.push(mapBlock(spec));
+          return mapReport(spec, geo.failed);
+        }
       }
       return `Unknown tool ${name}.`;
     };
 
     try {
-      let live = "";
-      let status = "";
-      const push = () => this.onStream?.(project.folder, live, status);
       const reply = await this.ai.chat({
         system: SYSTEM + "\n\n" + ctx.text,
         history,
@@ -420,7 +433,8 @@ export class Controller {
         onText: (d) => { live += d; status = ""; push(); },
         onTool: (name) => { status = TOOL_STATUS[name] ?? "Working…"; push(); },
       });
-      if (reply) await this.store.appendChat(project.folder, "ai", reply);
+      const body = [reply, ...maps].filter(Boolean).join("\n\n");
+      if (body) await this.store.appendChat(project.folder, "ai", body);
     } finally {
       this.onStream?.(project.folder, null, "");
       if (moved.length || madeFolders.length) {
@@ -448,7 +462,7 @@ export class Controller {
           ? `[Filed: ${e.body}]`
           : e.kind === "me"
             ? attachmentNote(e.body, project.folder)
-            : e.body;
+            : mapsAsText(e.body);
       const last = msgs[msgs.length - 1];
       if (last && last.role === role) last.text += "\n\n" + text;
       else msgs.push({ role, text });
@@ -559,6 +573,7 @@ How the workspace works:
 - Documents: when asked for a document (comparison, plan, calculation), call create_document with a precise, complete brief; it runs real code for calculations. Use read_file to read files in the project folder (text, markdown, PDF and images) and search_chat to find something said earlier that isn't in the recent conversation.
 - Organising files: use list_files to see the project's folders, create_folder to add folders, and move_file to move or rename files and folders (it never overwrites, and links to moved files are updated). Everything is limited to this project's folder; ClearDesk's own _project folder can't be touched, and nothing can be deleted. To name photos well, look at them with read_file first. Before reorganising more than a few files, say in one line what you'll do, then do it.
 - Google links: for docs.google.com and drive.google.com links always use read_google_doc, never web_fetch (web_fetch only sees an empty preview of Google Docs). A Docs link without a tab returns all tabs; with ?tab= it returns that tab only, so if the owner asks about another part of the document, read the link again without the tab parameter. Private files can't be opened: suggest sharing as "Anyone with the link can view", or downloading into the project folder.
+- Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map. The map appears under your reply, so don't list coordinates.
 - The web: when web_search and web_fetch are available, use them for current information and to read other links the owner pastes.
 
 Reply briefly and directly, in plain language. When you only filed something, a short confirmation or no text at all is fine: the app shows a receipt for every change.`;
@@ -590,6 +605,7 @@ const TOOL_STATUS: Record<string, string> = {
   read_file: "Reading a file…",
   search_chat: "Searching the chat…",
   create_document: "Writing the document… (can take a minute)",
+  show_map: "Making the map…",
 };
 
 const tool = (name: string, description: string, props: Record<string, { type: string; description: string }>): BetaTool => ({
@@ -659,3 +675,58 @@ const TOOLS: BetaTool[] = [
     brief: { type: "string", description: "Everything the document must contain, and which facts to use." },
   }),
 ];
+
+const obj = (props: Record<string, object>) => ({
+  type: "object",
+  properties: props,
+  required: Object.keys(props),
+  additionalProperties: false,
+});
+const str = (description: string) => ({ type: "string", description });
+const color = { type: "string", enum: [...MAP_COLORS], description: "Pin or shape colour." };
+
+TOOLS.push({
+  name: "show_map",
+  description: "Show an interactive map under your reply: pins for places, shaded neighbourhood outlines, distance circles and lines. Places are looked up in OpenStreetMap (about one per second the first time).",
+  strict: true,
+  input_schema: obj({
+    title: str("Short map title."),
+    places: {
+      type: "array",
+      items: obj({
+        name: str("Short name shown on the pin, e.g. Oranienstr. 12 or Office."),
+        address: str("Full address with city, or \"lat, lng\"; empty string to look up the name."),
+        color,
+        details: str("One line for the popup, e.g. €1,450 · 2 rooms · viewing Thu; or empty string."),
+        note_id: str("Id of the note or fact this place comes from (e.g. n-abc123), or empty string."),
+      }),
+    },
+    areas: {
+      type: "array",
+      items: obj({
+        name: str("Neighbourhood or district with city, e.g. Kreuzberg, Berlin."),
+        color,
+        label: str("Short label shown on the area, e.g. quiet; or empty string."),
+      }),
+    },
+    circles: {
+      type: "array",
+      items: obj({
+        center: str("A place name from places, or an address."),
+        radius_m: { type: "number", description: "Radius in metres." },
+        color,
+        label: str("Short label, or empty string for e.g. \"1 km from Office\"."),
+      }),
+    },
+    lines: {
+      type: "array",
+      items: obj({
+        from: str("A place name from places, or an address."),
+        to: str("A place name from places, or an address."),
+        color,
+        label: str("Short label, e.g. 25 min by tram; or empty string."),
+      }),
+    },
+    legend: { type: "array", items: obj({ color, label: str("What this colour means.") }) },
+  }),
+} as BetaTool);

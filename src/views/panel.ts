@@ -1,4 +1,4 @@
-import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
 import { Entry, Task, daysUntil, dueLabel, feedOrder, hostOf, isoDate, plainLinks, sortOpenTasks, splitEmbeds, whenLabel } from "../format";
@@ -58,6 +58,24 @@ export class PanelView extends ItemView {
       this.dirty = false;
       this.render();
     }
+  }
+
+  /** Scroll to a note or fact and flash it; shows all kinds and history if it's filtered out. */
+  async revealNote(id: string) {
+    const find = () => this.contentEl.querySelector(`.cd-note[data-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+    if (!find()) {
+      this.filter = "all";
+      this.showHistory = true;
+      await this.render();
+    }
+    const card = find();
+    if (!card) {
+      new Notice("That note is no longer in this project.");
+      return;
+    }
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    card.addClass("is-flash");
+    window.setTimeout(() => card.removeClass("is-flash"), 1600);
   }
 
   async render() {
