@@ -1,6 +1,6 @@
 {
   "name": "cleardesk",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "ClearDesk: a chat-first project workspace for Obsidian, powered by Claude.",
   "scripts": {
     "build": "node esbuild.config.mjs && cp manifest.json build/",
@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
     "deploy": "npm run build && node scripts/deploy.mjs",
-    "test:ai": "set -e; for h in ai-harness stream-harness attach-harness files-harness memory-harness map-harness edit-harness; do esbuild test/harness/$h.ts --bundle --platform=node --format=esm --alias:obsidian=./test/harness/obsidian-stub.ts --outfile=test/harness/$h.mjs --log-level=warning; node test/harness/$h.mjs 2>/dev/null || { echo \"FAILED: $h\"; exit 1; }; done"
+    "test:ai": "set -e; for h in ai-harness stream-harness attach-harness files-harness memory-harness map-harness edit-harness chats-harness; do esbuild test/harness/$h.ts --bundle --platform=node --format=esm --alias:obsidian=./test/harness/obsidian-stub.ts --outfile=test/harness/$h.mjs --log-level=warning; node test/harness/$h.mjs 2>/dev/null || { echo \"FAILED: $h\"; exit 1; }; done"
   },
   "author": "Alexander (https://github.com/Al-p-i)",
   "license": "MIT",

@@ -1,9 +1,9 @@
-import { ItemView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import { MANY_PINS, notesContext } from "../memory";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
 import { Entry, Task, daysUntil, dueLabel, feedOrder, hostOf, isoDate, plainLinks, sortOpenTasks, splitEmbeds, whenLabel } from "../format";
-import { ProjectMeta } from "../store";
+import { MAIN, ProjectMeta, chatOfPath } from "../store";
 import { appendLinkified, openExternal } from "./links";
 import { renderAttachments } from "./attachments";
 
@@ -80,6 +80,11 @@ export class PanelView extends ItemView {
     window.setTimeout(() => card.removeClass("is-flash"), 1600);
   }
 
+  /** Holds what pinned messages render (maps, embeds); replaced on every render. */
+  private md = new Component();
+  /** Chat titles, for the "From …" label on pinned messages. */
+  private chatTitles = new Map<string, string>();
+
   async render() {
     const p = this.plugin.active();
     const root = this.contentEl;
@@ -88,11 +93,15 @@ export class PanelView extends ItemView {
       return;
     }
     const store = this.plugin.store;
-    const [meta, tasks, notes] = await Promise.all([
+    const [meta, tasks, notes, chats] = await Promise.all([
       store.readMeta(p.folder),
       store.tasks(p.folder),
       store.notes(p.folder),
+      store.listChats(p.folder),
     ]);
+    this.chatTitles = new Map(chats.map((c) => [c.id, c.title]));
+    this.removeChild(this.md);
+    this.md = this.addChild(new Component());
     root.empty();
     root.addClass("cleardesk", "cd-panel");
     root.style.setProperty("--cd-color", p.color);
@@ -338,7 +347,19 @@ export class PanelView extends ItemView {
     this.makeDraggable(card, p, n);
     const body = card.createDiv("cd-note-body");
     if (n.kind === "fact") setIcon(body.createSpan("cd-sparkle"), "sparkles");
-    if (n.kind === "link" && n.meta.url) {
+    if (n.kind === "message") {
+      // A pinned chat message keeps its formatting (and maps); links open instead of starting an edit.
+      MarkdownRenderer.render(this.app, n.body, body.createDiv("cd-note-md"), p.folder, this.md);
+      body.addEventListener("click", (ev) => {
+        const a = (ev.target as HTMLElement).closest("a");
+        if (!a) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const href = a.getAttr("data-href") ?? a.getAttr("href") ?? "";
+        if (a.hasClass("internal-link")) this.app.workspace.openLinkText(href, "", "tab");
+        else if (/^(https?|mailto):/i.test(href)) openExternal(href);
+      });
+    } else if (n.kind === "link" && n.meta.url) {
       setIcon(body.createSpan("cd-link-icon"), "link");
       const a = body.createEl("a", { cls: "external-link cd-link-title", text: n.body || n.meta.url, href: n.meta.url });
       a.addEventListener("click", (ev) => {
@@ -360,6 +381,7 @@ export class PanelView extends ItemView {
     const meta = card.createDiv("cd-note-meta");
     meta.createSpan({ cls: "cd-when", text: whenLabel(n.datetime) });
     if (n.kind === "fact") meta.createSpan({ cls: "cd-muted", text: "AI" });
+    if (n.kind === "message") meta.createSpan({ cls: "cd-muted", text: this.messageFrom(n) });
     if (n.meta.source) this.sourceLink(meta, n.meta.source);
     meta.createSpan("cd-spacer");
     if (n.tag) meta.createSpan({ cls: "cd-tag", text: n.tag });
@@ -476,7 +498,18 @@ export class PanelView extends ItemView {
     });
   }
 
+  /** "From Main" / "From chat · Contract questions", from the link back to the message. */
+  private messageFrom(n: Entry): string {
+    const m = /\[\[([^\]|#]+)/.exec(n.meta.source ?? "");
+    const chat = m ? chatOfPath(m[1])?.chat : undefined;
+    if (chat === undefined) return "From chat";
+    return chat === MAIN ? "From Main" : `From chat · ${this.chatTitles.get(chat) ?? "archived chat"}`;
+  }
+
   private async setPinned(p: ProjectState, id: string, pinned: boolean) {
+    // A pinned message is a bookmark: unpinning removes it rather than leaving it in the feed.
+    const n = (await this.plugin.store.notes(p.folder)).find((x) => x.id === id);
+    if (n?.kind === "message" && !pinned) return this.plugin.controller.unpinMessage(p.folder, id);
     await this.plugin.store.updateNote(p.folder, id, (e) => {
       const meta = { ...e.meta };
       if (pinned) meta.pinned = "true";
@@ -499,9 +532,9 @@ export class PanelView extends ItemView {
       ev.stopPropagation();
       const m = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/.exec(source);
       if (!m) return;
-      const msg = /\/_project\/chat\/\d{4}-\d{2}#\^(m-[a-z0-9]+)$/.exec(m[1]);
-      if (msg) this.plugin.jumpToMessage(msg[1]);
-      else this.app.workspace.openLinkText(m[1], "", "tab");
+      this.plugin.jumpToMessage(m[1]).then((ok) => {
+        if (!ok) this.app.workspace.openLinkText(m[1], "", "tab");
+      });
     });
   }
 

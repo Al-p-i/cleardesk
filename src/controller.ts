@@ -6,7 +6,7 @@ import {
   Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, splitEmbeds, splitUrls, taskTitle, withEmbeds,
 } from "./format";
 import { parseMessage } from "./input";
-import { KeyFact, Project, Store, Tx } from "./store";
+import { KeyFact, MAIN, Project, Store, Tx, projectPaths } from "./store";
 import { moveTarget, projectPath, relPath } from "./paths";
 import { filesSummary, historySize, noteLine, notesContext, sameStatement, searchNotes } from "./memory";
 
@@ -63,6 +63,10 @@ function attachmentNote(body: string, folder: string): string {
   return `${text}\n[Attached: ${rel.join(", ")}]`.trim();
 }
 
+/** A project as seen from one of its chats: where messages, receipts and replies go (Main when unset). */
+export type InChat = Project & { chat?: string };
+const chatOf = (p: InChat) => p.chat ?? MAIN;
+
 /** Everything that happens when you send a message, plus undo. */
 export class Controller {
   private undos = new Map<string, Tx>();
@@ -70,7 +74,13 @@ export class Controller {
   changedFacts = new Map<string, number>();
 
   /** Live reply while the AI is writing; text = null when the turn is over. */
-  onStream?: (folder: string, text: string | null, status: string) => void;
+  onStream?: (folder: string, chat: string, text: string | null, status: string) => void;
+  /** `${folder}::${chat}` of chats where the AI is replying right now */
+  private busy = new Set<string>();
+
+  isBusy(folder: string, chat: string): boolean {
+    return this.busy.has(`${folder}::${chat}`);
+  }
 
   constructor(private store: Store, private ai: Ai, private emit: (kind: ChangeKind, folder: string) => void) {}
 
@@ -78,12 +88,12 @@ export class Controller {
     return this.undos.has(receiptId);
   }
 
-  async undo(project: Project, receipt: Entry) {
+  async undo(project: InChat, receipt: Entry) {
     const tx = this.undos.get(receipt.id);
     if (!tx) return;
     this.undos.delete(receipt.id);
     await this.store.undo(tx);
-    await this.store.updateChat(project.folder, receipt.datetime.slice(0, 7), receipt.id, (e) => ({
+    await this.store.updateChat(project.folder, chatOf(project), receipt, (e) => ({
       ...e,
       body: `Undone: ${e.body}`,
     }));
@@ -91,28 +101,31 @@ export class Controller {
     this.emit("data", project.folder);
   }
 
-  private async receipt(project: Project, body: string, tx?: Tx): Promise<Entry> {
-    const e = await this.store.appendChat(project.folder, "receipt", body);
+  private async receipt(project: InChat, body: string, tx?: Tx): Promise<Entry> {
+    const e = await this.store.appendChat(project.folder, "receipt", body, {}, chatOf(project));
     if (tx && tx.changed) this.undos.set(e.id, tx);
     this.emit("chat", project.folder);
     return e;
   }
 
-  private async error(project: Project, err: unknown) {
+  private async error(project: InChat, err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    await this.store.appendChat(project.folder, "error", msg.slice(0, 500));
+    await this.store.appendChat(project.folder, "error", msg.slice(0, 500), {}, chatOf(project));
     this.emit("chat", project.folder);
   }
 
   // ---------- sending ----------
 
-  async send(project: Project, raw: string, uploads: Upload[] = []): Promise<void> {
+  async send(project: InChat, raw: string, uploads: Upload[] = []): Promise<void> {
     const parsed = parseMessage(raw);
     if (!parsed.items.length && !uploads.length) return;
+    const chat = chatOf(project);
     const files: string[] = [];
     for (const u of uploads) files.push(await this.store.saveAttachment(project.folder, u.name, u.data));
-    const me = await this.store.appendChat(project.folder, "me", withEmbeds(raw.trim(), files));
+    const firstInChat = chat !== MAIN && !this.store.file(projectPaths(project.folder).chatFile(chat));
+    const me = await this.store.appendChat(project.folder, "me", withEmbeds(raw.trim(), files), {}, chat);
     this.emit("chat", project.folder);
+    if (firstInChat) this.titleChat(project.folder, chat, parsed.items[0] ?? raw).catch((e) => console.warn("ClearDesk: naming the chat failed", e));
     // Links are saved in the background so the reply isn't held up by fetching page titles.
     this.captureLinks(project, me, raw).catch((e) => console.warn("ClearDesk: saving links failed", e));
     try {
@@ -124,8 +137,17 @@ export class Controller {
     }
   }
 
+  /** A new chat's title from its first message: a few words from the fast model, or its first words. */
+  private async titleChat(folder: string, chat: string, text: string) {
+    const plain = splitEmbeds(text).text.replace(/\s+/g, " ").trim();
+    let title = plain.split(" ").slice(0, 6).join(" ").slice(0, 48) || "New chat";
+    if (this.ai.configured && plain) title = (await this.ai.chatTitle(plain.slice(0, 2000))) || title;
+    await this.store.updateChatInfo(folder, chat, { title });
+    this.emit("chat", folder);
+  }
+
   /** Save every new URL in a message as a link entry, titled from the page. */
-  private async captureLinks(project: Project, me: Entry, raw: string) {
+  private async captureLinks(project: InChat, me: Entry, raw: string) {
     const urls = [...new Set(splitUrls(raw).flatMap((p) => (p.url ? [p.url] : [])))];
     if (!urls.length) return;
     const notes = await this.store.notes(project.folder);
@@ -133,7 +155,7 @@ export class Controller {
     const fresh = urls.filter((u) => !saved.has(u)).slice(0, 10);
     if (!fresh.length) return;
     const tx = new Tx();
-    const source = this.store.chatLink(project.folder, me);
+    const source = this.store.chatLink(project.folder, me, chatOf(project));
     const added: Entry[] = [];
     for (const url of fresh) {
       const title = (await fetchTitle(url)) || linkLabel(url);
@@ -196,7 +218,7 @@ export class Controller {
     return blocks;
   }
 
-  private async addTasks(project: Project, me: Entry, items: string[]) {
+  private async addTasks(project: InChat, me: Entry, items: string[]) {
     // The AI cleans up the first line and finds the due date; details stay as typed.
     const titles = items.map(taskTitle);
     let tasks = titles.map((text) => ({ text, due: "" }));
@@ -210,7 +232,7 @@ export class Controller {
     }
     tasks = tasks.map((t, i) => ({ ...t, text: [t.text, ...items[i].split("\n").slice(1)].join("\n") }));
     const tx = new Tx();
-    const source = this.store.chatLink(project.folder, me);
+    const source = this.store.chatLink(project.folder, me, chatOf(project));
     await this.store.addTasks(
       project.folder,
       tasks.map((t) => ({ done: false, text: t.text, due: isIsoDate(t.due) ? t.due : undefined, source })),
@@ -223,7 +245,7 @@ export class Controller {
     this.emit("data", project.folder);
   }
 
-  private async addNote(project: Project, body: string) {
+  private async addNote(project: InChat, body: string) {
     const tx = new Tx();
     const note = await this.store.addNote(project.folder, { kind: "note", tag: "", body, meta: {} }, tx);
     this.emit("data", project.folder);
@@ -238,7 +260,7 @@ export class Controller {
       const facts = res.key_facts.filter((f) => f.label.trim() && f.value.trim()).slice(0, 3);
       for (const f of facts) await this.setKeyFact(project, f.label, f.value, tx);
       const parts = ["✓ Note saved", res.tag && res.tag.trim(), facts.length && "card updated"];
-      await this.store.updateChat(project.folder, receipt.datetime.slice(0, 7), receipt.id, (e) => ({
+      await this.store.updateChat(project.folder, chatOf(project), receipt, (e) => ({
         ...e,
         body: parts.filter(Boolean).join(" · "),
       }));
@@ -262,7 +284,7 @@ export class Controller {
 
   // ---------- chat with tools ----------
 
-  private async chat(project: Project, me: Entry) {
+  private async chat(project: InChat, me: Entry) {
     if (!this.ai.configured) {
       await this.receipt(project, keyProblem(this.ai.key) ?? "The AI isn't set up.");
       return;
@@ -273,11 +295,17 @@ export class Controller {
     const madeFolders: string[] = [];
     const ctx = await this.context(project);
     const history = await this.history(project, me);
-    const source = this.store.chatLink(project.folder, me);
-    const maps: string[] = []; // saved under the reply
+    const chat = chatOf(project);
+    const source = this.store.chatLink(project.folder, me, chat);
+    // Saved under the reply. A second map with the same title replaces the first (Claude
+    // sometimes retries with better addresses); maps with other titles are kept.
+    const maps = new Map<string, string>();
     let live = "";
     let status = "";
-    const push = () => this.onStream?.(project.folder, live, status);
+    const push = () => this.onStream?.(project.folder, chat, live, status);
+    const busyKey = `${project.folder}::${chat}`;
+    this.busy.add(busyKey);
+    this.emit("chat", project.folder); // the chat list shows it as replying
 
     // File operations run one at a time, even when the model asks for several at once.
     let fileQueue: Promise<unknown> = Promise.resolve();
@@ -434,8 +462,10 @@ export class Controller {
         case "search_chat": {
           // Same search as the chat's search bar: every word must appear.
           const hits = await this.store.searchChat([project.folder], queryWords(s("query")), 25);
+          const titles = new Map((await this.store.listChats(project.folder)).map((c) => [c.id, c.title]));
+          const where = (c: string) => (c === chat ? "this chat" : c === MAIN ? "Main chat" : `chat "${titles.get(c) ?? c}"`);
           return hits.length
-            ? hits.map(({ entry: e }) => `${e.datetime} ${e.kind === "me" ? "owner" : "you"}: ${mapsAsText(e.body).slice(0, 400)}`).join("\n")
+            ? hits.map(({ chat: c, entry: e }) => `${e.datetime} (${where(c)}) ${e.kind === "me" ? "owner" : "you"}: ${mapsAsText(e.body).slice(0, 400)}`).join("\n")
             : "Nothing found. Try fewer or different words.";
         }
         case "create_document": {
@@ -452,8 +482,10 @@ export class Controller {
             push();
           });
           await geo.save();
-          if (spec.places.length || spec.areas.length || spec.circles.length || spec.lines.length) maps.push(mapBlock(spec));
-          return mapReport(spec, geo.failed);
+          const key = spec.title.toLowerCase();
+          const replaced = maps.has(key);
+          if (spec.places.length || spec.areas.length || spec.circles.length || spec.lines.length) maps.set(key, mapBlock(spec));
+          return (replaced ? "This replaces your earlier map with the same title. " : "") + mapReport(spec, geo.failed);
         }
       }
       return `Unknown tool ${name}.`;
@@ -470,10 +502,11 @@ export class Controller {
         onText: (d) => { live += d; status = ""; push(); },
         onTool: (name) => { status = TOOL_STATUS[name] ?? "Working…"; push(); },
       });
-      const body = [reply, ...maps].filter(Boolean).join("\n\n");
-      if (body) await this.store.appendChat(project.folder, "ai", body);
+      const body = [reply, ...maps.values()].filter(Boolean).join("\n\n");
+      if (body) await this.store.appendChat(project.folder, "ai", body, {}, chat);
     } finally {
-      this.onStream?.(project.folder, null, "");
+      this.busy.delete(busyKey);
+      this.onStream?.(project.folder, chat, null, "");
       if (moved.length || madeFolders.length) {
         const parts = [];
         if (moved.length) parts.push(moved.length <= 3 ? moved.join(", ") : `${moved.length} items moved or renamed`);
@@ -488,8 +521,8 @@ export class Controller {
   }
 
   /** The last 40-59 chat entries as API messages (receipts become assistant notes). */
-  private async history(project: Project, current: Entry): Promise<BetaMessageParam[]> {
-    const all = (await this.store.recentChat(project.folder, 100000)).filter((e) => e.id !== current.id);
+  private async history(project: InChat, current: Entry): Promise<BetaMessageParam[]> {
+    const all = (await this.store.recentChat(project.folder, 100000, chatOf(project))).filter((e) => e.id !== current.id);
     const entries = all.slice(-historySize(all.length));
     const msgs: { role: "user" | "assistant"; text: string }[] = [];
     for (const e of entries) {
@@ -551,13 +584,28 @@ ${done.join("\n") || "(none)"}
 
 Topics in this project's notes: ${tagLine || "(none yet)"}
 
-Notes (owner's words), facts (extracted by you) and saved links, as the owner sees them in the side panel: pinned items first (the ones the owner marked as most important), then the top of the feed (newest first unless the owner reordered them). Long ones are cut here; search_notes returns more of them:
+Notes (owner's words), facts (extracted by you), saved links and pinned messages (copies of chat messages, from any of this project's chats, that the owner pinned), as the owner sees them in the side panel: pinned items first (the ones the owner marked as most important), then the top of the feed (newest first unless the owner reordered them). Long ones are cut here; search_notes returns more of them:
 ${noteLines.join("\n") || "(none)"}${olderLine}
 
 Files in the project folder (overview; use list_files for details):
 ${files.join("\n") || "(none)"}
 </project>`;
     return { text, taskById };
+  }
+
+  // ---------- pinned messages ----------
+
+  /** Pin a chat message: a copy goes to the panel's pinned items, linked back to the message. */
+  async pinMessage(project: InChat, e: Entry) {
+    const source = this.store.chatLink(project.folder, e, chatOf(project));
+    await this.store.addNote(project.folder, { kind: "message", tag: "", body: e.body, meta: { source, pinned: "true" } });
+    this.emit("data", project.folder);
+  }
+
+  /** Unpinning removes the copy; the message stays in its chat. */
+  async unpinMessage(folder: string, noteId: string) {
+    await this.store.updateNote(folder, noteId, () => null);
+    this.emit("data", folder);
   }
 
   // ---------- moving, import ----------
@@ -611,7 +659,7 @@ How the workspace works:
 - Documents: when asked for a document (comparison, plan, calculation), call create_document with a precise, complete brief; it runs real code for calculations. Use read_file to read files in the project folder (text, markdown, PDF and images) and search_chat to find something said earlier that isn't in the recent conversation.
 - Organising files: use list_files to see the project's folders, create_folder to add folders, and move_file to move or rename files and folders (it never overwrites, and links to moved files are updated). Everything is limited to this project's folder; ClearDesk's own _project folder can't be touched, and nothing can be deleted. To name photos well, look at them with read_file first. Before reorganising more than a few files, say in one line what you'll do, then do it.
 - Google links: for docs.google.com and drive.google.com links always use read_google_doc, never web_fetch (web_fetch only sees an empty preview of Google Docs). A Docs link without a tab returns all tabs; with ?tab= it returns that tab only, so if the owner asks about another part of the document, read the link again without the tab parameter. Private files can't be opened: suggest sharing as "Anyone with the link can view", or downloading into the project folder.
-- Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map. The map appears under your reply, so don't list coordinates.
+- Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map; in the same reply, a map with the same title replaces the earlier one. The map appears under your reply, so don't list coordinates.
 - The web: when web_search and web_fetch are available, use them for current information and to read other links the owner pastes.
 
 Reply briefly and directly, in plain language. When you only filed something, a short confirmation or no text at all is fine: the app shows a receipt for every change.`;

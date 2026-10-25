@@ -38,6 +38,29 @@ export interface Project extends ProjectMeta {
   home: boolean;
 }
 
+/** A project's Main chat: the original log, one file per month under chat/. */
+export const MAIN = "";
+
+/** A chat other than Main: one file under chats/, named by its id. */
+export interface ChatInfo {
+  id: string;
+  title: string;
+  created: string; // YYYY-MM-DD HH:MM
+  archived: boolean;
+  /** time of the last message, or creation */
+  updated: string;
+}
+
+/** The project and chat a chat file (or a link to one, without .md) belongs to. */
+export function chatOfPath(path: string): { folder: string; chat: string } | null {
+  const m = /^(.+)\/_project\/(?:chat\/\d{4}-\d{2}|chats\/(c-[a-z0-9]+))(?:\.md)?$/.exec(path);
+  return m ? { folder: m[1], chat: m[2] ?? MAIN } : null;
+}
+
+function chatHeader(info: { title: string; created: string; archived: boolean }): string {
+  return `---\n${stringifyYaml(info).trim()}\n---\n`;
+}
+
 /** Records the original content of every file a change touches, so it can be undone. */
 export class Tx {
   snapshots = new Map<string, string | null>();
@@ -62,6 +85,8 @@ export function projectPaths(folder: string) {
     places: `${sys}/places.json`,
     chatDir: `${sys}/chat`,
     chat: (month: string) => `${sys}/chat/${month}.md`,
+    chatsDir: `${sys}/chats`,
+    chatFile: (id: string) => `${sys}/chats/${id}.md`,
   };
 }
 
@@ -218,7 +243,7 @@ export class Store {
 
   async addNote(folder: string, e: Omit<Entry, "id" | "datetime"> & Partial<Entry>, tx?: Tx): Promise<Entry> {
     const entry: Entry = {
-      id: e.id ?? newId(e.kind === "fact" ? "f" : e.kind === "link" ? "l" : "n"),
+      id: e.id ?? newId(e.kind === "fact" ? "f" : e.kind === "link" ? "l" : e.kind === "message" ? "p" : "n"),
       datetime: e.datetime ?? isoDateTime(),
       kind: e.kind,
       tag: e.tag,
@@ -242,7 +267,9 @@ export class Store {
     await this.modify(projectPaths(folder).notes, (text) => updateEntry(text, id, fn), tx);
   }
 
-  // ---------- chat log ----------
+  // ---------- chats ----------
+  // Main is the original log (chat/YYYY-MM.md); every other chat is one file, chats/<id>.md,
+  // whose frontmatter holds its title. All take the same entry format.
 
   chatMonths(folder: string): string[] {
     const dir = this.app.vault.getAbstractFileByPath(projectPaths(folder).chatDir);
@@ -253,45 +280,101 @@ export class Store {
       .sort();
   }
 
-  async chat(folder: string, month: string): Promise<Entry[]> {
-    return parseEntries(await this.read(projectPaths(folder).chat(month)));
+  /** Ids of the project's chats other than Main. */
+  chatIds(folder: string): string[] {
+    const dir = this.app.vault.getAbstractFileByPath(projectPaths(folder).chatsDir);
+    if (!(dir instanceof TFolder)) return [];
+    return dir.children
+      .filter((c): c is TFile => c instanceof TFile && /^c-[a-z0-9]+\.md$/.test(c.name))
+      .map((c) => c.basename);
   }
 
-  /** Most recent chat entries across months, oldest first. */
-  async recentChat(folder: string, limit: number): Promise<Entry[]> {
-    const months = this.chatMonths(folder).reverse();
+  /** The files a chat lives in, oldest first. */
+  chatPaths(folder: string, chat: string = MAIN): string[] {
+    const p = projectPaths(folder);
+    if (chat !== MAIN) return this.file(p.chatFile(chat)) ? [p.chatFile(chat)] : [];
+    return this.chatMonths(folder).map((m) => p.chat(m));
+  }
+
+  /** Every chat file of a project: Main's months, then the other chats. */
+  allChatPaths(folder: string): string[] {
+    return [...this.chatPaths(folder), ...this.chatIds(folder).map((id) => projectPaths(folder).chatFile(id))];
+  }
+
+  /** The file a chat entry is (or will be) stored in. */
+  private chatPath(folder: string, chat: string, datetime: string): string {
+    const p = projectPaths(folder);
+    return chat === MAIN ? p.chat(datetime.slice(0, 7)) : p.chatFile(chat);
+  }
+
+  async chatEntries(path: string): Promise<Entry[]> {
+    return parseEntries(await this.read(path));
+  }
+
+  /** Most recent entries of one chat, oldest first. */
+  async recentChat(folder: string, limit: number, chat: string = MAIN): Promise<Entry[]> {
     let out: Entry[] = [];
-    for (const m of months) {
-      out = [...(await this.chat(folder, m)), ...out];
+    for (const path of this.chatPaths(folder, chat).reverse()) {
+      out = [...(await this.chatEntries(path)), ...out];
       if (out.length >= limit) break;
     }
     return out.slice(-limit);
   }
 
-  async appendChat(folder: string, kind: string, body: string, meta: Record<string, string> = {}): Promise<Entry> {
+  /** Append to a chat; a new chat's file is created with its frontmatter on the first message. */
+  async appendChat(folder: string, kind: string, body: string, meta: Record<string, string> = {}, chat: string = MAIN): Promise<Entry> {
     const now = new Date();
     const e: Entry = { id: newId("m"), datetime: isoDateTime(now), kind, tag: "", body, meta };
-    const month = monthKey(now);
-    await this.modify(projectPaths(folder).chat(month), (text) =>
-      appendEntry(text || `# Chat · ${month}\n`, e)
-    );
+    const first = chat === MAIN ? `# Chat · ${monthKey(now)}\n` : chatHeader({ title: "New chat", created: e.datetime, archived: false });
+    await this.modify(this.chatPath(folder, chat, e.datetime), (text) => appendEntry(text || first, e));
     return e;
   }
 
-  async updateChat(folder: string, month: string, id: string, fn: (e: Entry) => Entry | null) {
-    await this.modify(projectPaths(folder).chat(month), (text) => updateEntry(text, id, fn));
+  async updateChat(folder: string, chat: string, entry: Entry, fn: (e: Entry) => Entry | null) {
+    await this.modify(this.chatPath(folder, chat, entry.datetime), (text) => updateEntry(text, entry.id, fn));
   }
 
-  /** Chat messages (yours and the AI's) containing all words, newest first. */
-  async searchChat(folders: string[], words: string[], limit = 100): Promise<{ folder: string; entry: Entry }[]> {
-    const out: { folder: string; entry: Entry }[] = [];
-    const all: { folder: string; month: string }[] = [];
-    for (const folder of folders) for (const month of this.chatMonths(folder)) all.push({ folder, month });
-    all.sort((a, b) => b.month.localeCompare(a.month));
-    for (const { folder, month } of all) {
-      const entries = (await this.chat(folder, month)).filter((e) => e.kind === "me" || e.kind === "ai");
-      for (const e of entries) {
-        if (matchesAll(mapsAsText(splitEmbeds(e.body).text), words)) out.push({ folder, entry: e });
+  /** The project's chats other than Main, most recently active first. */
+  async listChats(folder: string): Promise<ChatInfo[]> {
+    const out: ChatInfo[] = [];
+    for (const id of this.chatIds(folder)) {
+      const text = await this.read(projectPaths(folder).chatFile(id));
+      let fm: Record<string, unknown> = {};
+      try {
+        fm = (parseYaml(splitFrontmatter(text).yaml) as Record<string, unknown>) ?? {};
+      } catch {
+        fm = {};
+      }
+      const entries = parseEntries(text);
+      const created = String(fm.created ?? entries[0]?.datetime ?? "");
+      out.push({
+        id,
+        title: String(fm.title ?? "").trim() || "Untitled chat",
+        created,
+        archived: fm.archived === true,
+        updated: entries[entries.length - 1]?.datetime ?? created,
+      });
+    }
+    return out.sort((a, b) => b.updated.localeCompare(a.updated));
+  }
+
+  /** Rename or (un)archive a chat. */
+  async updateChatInfo(folder: string, id: string, patch: Partial<Pick<ChatInfo, "title" | "archived">>) {
+    const info = (await this.listChats(folder)).find((c) => c.id === id);
+    if (!info) return;
+    const next = { title: patch.title ?? info.title, created: info.created, archived: patch.archived ?? info.archived };
+    await this.modify(projectPaths(folder).chatFile(id), (text) => chatHeader(next) + splitFrontmatter(text).body);
+  }
+
+  /** Chat messages (yours and the AI's) in any chat containing all words, newest first. */
+  async searchChat(folders: string[], words: string[], limit = 100): Promise<{ folder: string; chat: string; entry: Entry }[]> {
+    const out: { folder: string; chat: string; entry: Entry }[] = [];
+    for (const folder of folders) {
+      for (const path of this.allChatPaths(folder)) {
+        const chat = chatOfPath(path)?.chat ?? MAIN;
+        for (const e of await this.chatEntries(path)) {
+          if ((e.kind === "me" || e.kind === "ai") && matchesAll(mapsAsText(splitEmbeds(e.body).text), words)) out.push({ folder, chat, entry: e });
+        }
       }
     }
     out.sort((a, b) => b.entry.datetime.localeCompare(a.entry.datetime));
@@ -299,9 +382,8 @@ export class Store {
   }
 
   /** Wikilink to a chat message, usable from any file. */
-  chatLink(folder: string, e: Entry): string {
-    const month = e.datetime.slice(0, 7);
-    return `[[${projectPaths(folder).chat(month).replace(/\.md$/, "")}#^${e.id}|chat]]`;
+  chatLink(folder: string, e: Entry, chat: string = MAIN): string {
+    return `[[${this.chatPath(folder, chat, e.datetime).replace(/\.md$/, "")}#^${e.id}|chat]]`;
   }
 
   // ---------- organising project files (AI tools) ----------
@@ -440,8 +522,7 @@ export class Store {
   /** ClearDesk's own files that hold links: chat, notes, tasks. */
   linkFiles(folder: string): TFile[] {
     const p = projectPaths(folder);
-    const months = this.chatMonths(folder).map((m) => p.chat(m));
-    return [...months, p.notes, p.tasks].map((x) => this.file(x)).filter((f): f is TFile => f !== null);
+    return [...this.allChatPaths(folder), p.notes, p.tasks].map((x) => this.file(x)).filter((f): f is TFile => f !== null);
   }
 
   /** Point links in a project's chat, notes and tasks from oldPath to newPath; returns how many files changed. */

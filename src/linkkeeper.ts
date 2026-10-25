@@ -79,7 +79,7 @@ export class LinkKeeper {
         }
       }
     };
-    for (const m of this.store.chatMonths(folder)) scan(await this.store.chat(folder, m), `${folder}/_project/chat/${m}.md`);
+    for (const path of this.store.allChatPaths(folder)) scan(await this.store.chatEntries(path), path);
     scan(await this.store.notes(folder), `${folder}/_project/notes.md`);
     return { missing, linked };
   }

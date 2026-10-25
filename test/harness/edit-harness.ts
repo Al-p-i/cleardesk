@@ -40,7 +40,7 @@ const chat: any[] = [];
 Object.assign(store, {
   readMeta: async () => ({ color: "", goal: "", status: "", order: 0, key_facts: [] }),
   projectFiles: () => [], recentChat: async () => [], chatLink: () => "[[x]]",
-  updateChat: async (_f: string, _m: string, id: string, fn: (e: any) => any) => { const i = chat.findIndex((e) => e.id === id); chat[i] = fn(chat[i]); },
+  updateChat: async (_f: string, _c: string, entry: any, fn: (e: any) => any) => { const i = chat.findIndex((e) => e.id === entry.id); chat[i] = fn(chat[i]); },
   appendChat: async (_f: string, kind: string, body: string) => { const e = { id: `m-${chat.length}`, datetime: "2026-10-25 12:00", kind, tag: "", body, meta: {} }; chat.push(e); return e; },
 });
 

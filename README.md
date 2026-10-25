@@ -19,12 +19,14 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 
 - **Projects**: each project is a folder in your vault, with its own colour. Switch with a click; the default project (Desk) is always at the top. Mark projects as at risk, blocked, done or archived; done and archived ones fold away.
 - **Chat as the main interface**: ask questions about the project. Claude answers with the project's tasks, notes, facts and files in mind, and streams its reply. When you explicitly ask, it can also reschedule, reword or delete tasks and edit or delete notes; every change gets a receipt with undo.
+- **Separate chats**: each project has its Main chat plus as many topic chats as you like, listed under the open project in the left panel (titled automatically, renamable, archivable). Every chat shares the project's panel, so a fact or task from one chat is known in all of them; Claude reads only the current chat's conversation.
 - **Quick capture**:
   - `/t call the agency fri`: a task, with the date understood
   - `/n kreuzberg is loud`: a note, auto-tagged
-  - `/t` or `/n` alone (or the chips above the input) starts a multi-line task or note: Shift+Enter for a new line, Enter or ✓ to save (on a phone, Enter adds a line and ✓ saves). A task's extra lines are its details.
+  - `/t` or `/n` alone (or the chips above the input) starts a multi-line task or note: Enter for a new line, ⌘↵ (Ctrl+↵ on Windows) or ✓ to save, Esc or ✕ to cancel. A task's extra lines are its details.
 - **Automatic filing**: facts you mention in passing are saved as AI facts, links you paste are saved with their page title, and every change gets a receipt with **undo**.
 - **Project card**: your goal, plus key facts (budget, deadline, shortlist…) that Claude keeps up to date.
+- **Pinned messages**: pin any message in a chat (yours or Claude's) and a copy joins the panel's pinned items, linked back to the message. Claude keeps it in mind in every chat; unpinning removes the copy.
 - **Notes feed**: your notes, AI facts and links in one list, with filters, topic tags, drag-to-reorder and pinning. The feed shows what Claude knows: everything pinned plus the top 30 items go with every message, and a line marks where that ends (older items are found by search).
 - **Attachments**: paste, drop or pick images, PDFs and text files; Claude reads them.
 - **Web and Google**: Claude can search the web and read pasted links, including Google Docs, Sheets and Slides shared via link.
@@ -71,7 +73,8 @@ APARTMENTS/
     project.md        colour, goal, status, order, key facts (frontmatter)
     tasks.md          - [ ] Send payslips 🔗 [[source]] 📅 2026-10-20 ^t-k2j3a   (Obsidian Tasks format)
     notes.md          ### 2026-10-17 15:10 · note · Kreuzberg ^n-k3j2a  + text
-    chat/2026-10.md   ### 2026-10-17 14:32 · me ^m-abc123  + message (maps are ```cleardesk-map blocks in replies)
+    chat/2026-10.md   Main chat, one file per month: ### 2026-10-17 14:32 · me ^m-abc123  + message (maps are ```cleardesk-map blocks in replies)
+    chats/c-k2j3a.md  another chat: title in its frontmatter, messages in the same format
     places.json       places already found for maps, so they aren't looked up twice
     attachments.json  fingerprints of attached files, to find them after moves
   Attachments/        files you add in the chat

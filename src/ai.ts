@@ -112,6 +112,16 @@ Weekday names mean the next such day after today (today's own weekday means 7 da
     return out.tasks;
   }
 
+  /** A short title for a new chat, from its first message. */
+  async chatTitle(text: string): Promise<string> {
+    const out = await this.json<{ title: string }>(
+      `Give this conversation a short title of 2-5 words, in the language of the message, like a chat title in a sidebar. No quotes, no final punctuation.`,
+      text,
+      { type: "object", properties: { title: { type: "string" } }, required: ["title"], additionalProperties: false }
+    );
+    return out.title.replace(/^["'«]+|["'».]+$/g, "").trim().slice(0, 60);
+  }
+
   /** Pick a topic tag for a note and suggest key-fact updates. */
   async tagNote(
     note: string,

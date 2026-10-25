@@ -3,7 +3,7 @@ import type ClearDesk from "../main";
 import { Entry, fullDateLabel, isoDate, isoDateTime, queryWords, snippetParts, splitEmbeds, updatedLabel, whenLabel } from "../format";
 import { CommandKind, blockOpener, parseMessage } from "../input";
 import { appendLinkified, openExternal } from "./links";
-import { isClosed } from "../store";
+import { MAIN, chatOfPath, isClosed, projectPaths } from "../store";
 import { isImageName, renderAttachments } from "./attachments";
 import { mapsAsText } from "../map";
 
@@ -30,8 +30,14 @@ export class ChatView extends ItemView {
   private liveMd: Component | null = null;
   private liveTimer: number | null = null;
   private queue: Promise<void> = Promise.resolve();
-  private pending = 0;
+  /** Messages sent and not yet answered, per `${folder}::${chat}`. */
+  private pendingIn = new Map<string, number>();
   private folder = "";
+  /** The open chat ("" = Main) and its title. */
+  private chat = MAIN;
+  private chatTitle = "";
+  /** Pinned messages of the open chat: message id -> id of its copy in the notes. */
+  private pinned = new Map<string, string>();
   private showAll = false;
   private missing = 0;
   private missingEl!: HTMLElement;
@@ -120,6 +126,7 @@ export class ChatView extends ItemView {
     });
 
     this.registerEvent(this.plugin.events.on("active", () => this.reload(true)));
+    this.registerEvent(this.plugin.events.on("chat-switch", () => this.reload(true)));
     // On startup this view can open before the project list has loaded; load the
     // history as soon as the active project is known (or changes).
     this.registerEvent(
@@ -130,12 +137,18 @@ export class ChatView extends ItemView {
     );
     this.registerEvent(this.plugin.events.on("tick", () => this.renderHeader()));
     this.registerEvent(
-      this.plugin.events.on("stream", (folder: unknown, text: unknown, status: unknown) => {
-        if (folder === this.folder) this.onStream(text as string | null, String(status ?? ""));
+      this.plugin.events.on("stream", (folder: unknown, chat: unknown, text: unknown, status: unknown) => {
+        if (folder === this.folder && chat === this.chat) this.onStream(text as string | null, String(status ?? ""));
       })
     );
     this.registerEvent(
       this.plugin.events.on("chat", (folder: unknown) => {
+        if (folder === this.folder) this.reload(false);
+      })
+    );
+    // Pins can change from the panel too.
+    this.registerEvent(
+      this.plugin.events.on("data", (folder: unknown) => {
         if (folder === this.folder) this.reload(false);
       })
     );
@@ -149,7 +162,11 @@ export class ChatView extends ItemView {
     const p = this.plugin.active();
     this.contentEl.style.setProperty("--cd-color", p?.color ?? "var(--interactive-accent)");
     this.headerEl.empty();
-    this.headerEl.createSpan({ cls: "cd-chat-title", text: p ? p.name : "No project" });
+    const title = this.headerEl.createSpan({ cls: "cd-chat-title", text: p ? p.name : "No project" });
+    if (p && this.chat !== MAIN) {
+      title.createSpan({ cls: "cd-chat-sep", text: " › " });
+      title.createSpan({ cls: "cd-chat-name", text: this.chatTitle });
+    }
     if (p && isClosed(p.status)) {
       const chip = this.headerEl.createSpan({ cls: "cd-closed-chip" });
       setIcon(chip.createSpan("cd-closed-chip-icon"), p.status === "done" ? "circle-check" : "archive");
@@ -173,7 +190,10 @@ export class ChatView extends ItemView {
       const h = BLOCK_HINT[this.block];
       const label = this.hintEl.createSpan("cd-hint-block");
       setIcon(label.createSpan(), h.icon);
-      label.createSpan({ text: ` ${h.label} · ${Platform.isMobile ? "tap ✓ to save" : "Shift+Enter for a new line · Esc to cancel"}` });
+      label.createSpan({ text: ` ${h.label} · ${Platform.isMobile ? "tap ✓ to save" : `${Platform.isMacOS ? "⌘↵" : "Ctrl+↵"} to save · Esc to cancel`}` });
+      const cancel = this.hintEl.createSpan({ cls: "cd-icon-btn cd-hint-cancel", attr: { "aria-label": "Cancel" } });
+      setIcon(cancel, "x");
+      cancel.onClickEvent(() => this.cancelBlock());
       this.inputEl.placeholder = this.block === "task" ? "the task; more lines add details" : "write your note";
     } else {
       for (const [kind, text] of [["task", "/t task"], ["note", "/n note"]] as const) {
@@ -191,8 +211,15 @@ export class ChatView extends ItemView {
     const p = this.plugin.active();
     if (reset) {
       this.folder = p?.folder ?? "";
+      this.chat = this.plugin.activeChat();
       this.showAll = false;
       this.exitBlock();
+      this.liveText = null;
+      this.setBusy("");
+    }
+    if (p && this.chat !== MAIN) {
+      const info = (await this.plugin.store.listChats(p.folder)).find((c) => c.id === this.chat);
+      this.chatTitle = info?.title ?? "New chat";
     }
     this.renderHeader();
     if (!p) {
@@ -200,13 +227,28 @@ export class ChatView extends ItemView {
       return;
     }
     const nearBottom = this.listEl.scrollHeight - this.listEl.scrollTop - this.listEl.clientHeight < 80;
-    const entries = await this.plugin.store.recentChat(p.folder, this.showAll ? 100000 : 200);
+    const [entries, notes] = await Promise.all([
+      this.plugin.store.recentChat(p.folder, this.showAll ? 100000 : 200, this.chat),
+      this.plugin.store.notes(p.folder),
+    ]);
+    this.pinned = new Map();
+    for (const n of notes) {
+      if (n.kind !== "message" || !n.meta.source) continue;
+      const m = /\[\[([^\]|#]+)#\^(m-[a-z0-9]+)/.exec(n.meta.source);
+      if (m && (chatOfPath(m[1])?.chat ?? null) === this.chat) this.pinned.set(m[2], n.id);
+    }
     this.render(entries);
     if (reset || nearBottom) this.listEl.scrollTop = this.listEl.scrollHeight;
   }
 
   private chatSource(e: Entry): string {
-    return `${this.folder}/_project/chat/${e.datetime.slice(0, 7)}.md`;
+    const p = projectPaths(this.folder);
+    return this.chat === MAIN ? p.chat(e.datetime.slice(0, 7)) : p.chatFile(this.chat);
+  }
+
+  /** Messages waiting for an answer in the open chat. */
+  private pendingHere(): number {
+    return this.pendingIn.get(`${this.folder}::${this.chat}`) ?? 0;
   }
 
   private render(entries: Entry[]) {
@@ -217,9 +259,12 @@ export class ChatView extends ItemView {
     const nodes: HTMLElement[] = [];
     if (!entries.length) {
       const empty = createDiv("cd-empty");
-      empty.createDiv({ cls: "cd-empty-title", text: "Start talking about this project" });
+      const fresh = this.chat !== MAIN;
+      empty.createDiv({ cls: "cd-empty-title", text: fresh ? "New chat" : "Start talking about this project" });
       empty.createDiv({
-        text: "Ask questions, mention new facts, add tasks with /t and notes with /n. Everything gets filed for you.",
+        text: fresh
+          ? "Claude knows this project's card, tasks and notes, but not what was said in your other chats."
+          : "Ask questions, mention new facts, add tasks with /t and notes with /n. Everything gets filed for you.",
       });
       nodes.push(empty);
     }
@@ -240,7 +285,7 @@ export class ChatView extends ItemView {
         nodes.push(createDiv({ cls: "cd-day", text: d === today ? "Today" : whenLabel(e.datetime, today) }));
       }
       // Reuse the message as drawn unless it changed (an undo, an edit, a relinked attachment).
-      const key = `${e.kind}|${e.body}|${e.kind === "receipt" && this.plugin.controller.canUndo(e.id)}`;
+      const key = `${e.kind}|${e.body}|${e.kind === "receipt" && this.plugin.controller.canUndo(e.id)}|${this.pinned.has(e.id)}`;
       let r = old.get(e.id);
       if (r && r.key === key) {
         old.delete(e.id);
@@ -310,7 +355,7 @@ export class ChatView extends ItemView {
   }
 
   private setBusy(status: string) {
-    if (!this.pending) {
+    if (!this.pendingHere()) {
       this.busyEl.hide();
       return;
     }
@@ -355,6 +400,7 @@ export class ChatView extends ItemView {
       const actions = turn.createDiv("cd-msg-actions");
       actions.createSpan({ cls: "cd-msg-time", text: e.datetime.slice(11, 16), attr: { title: fullDateLabel(e.datetime) } });
       if (copyText) this.copyButton(actions, copyText);
+      this.pinButton(actions, e);
       return turn;
     }
     const el = createDiv({ cls: `cd-msg cd-${e.kind}`, attr: { "data-id": e.id, title: fullDateLabel(e.datetime) } });
@@ -364,13 +410,31 @@ export class ChatView extends ItemView {
       if (e.body.startsWith("Undone: ")) el.addClass("is-undone");
       else if (this.plugin.controller.canUndo(e.id)) {
         const undo = el.createEl("a", { cls: "cd-undo", text: "undo" });
-        undo.onClickEvent(() => this.plugin.controller.undo(p, e));
+        undo.onClickEvent(() => this.plugin.controller.undo({ ...p, chat: this.chat }, e));
       }
     } else if (e.kind === "error") {
       setIcon(el.createSpan("cd-error-icon"), "alert-circle");
       el.createSpan({ text: ` ${e.body}` });
     }
     return el;
+  }
+
+  /** Pin a message to the panel (a copy, linked back here), or unpin it. */
+  private pinButton(el: HTMLElement, e: Entry) {
+    const noteId = this.pinned.get(e.id);
+    const btn = el.createSpan({
+      cls: "cd-copy cd-msg-pin" + (noteId ? " is-on" : ""),
+      attr: { "aria-label": noteId ? "Unpin from the panel" : "Pin to the panel: Claude keeps it in mind in every chat" },
+    });
+    setIcon(btn, "pin");
+    if (noteId) el.parentElement?.addClass("is-pinned");
+    btn.onClickEvent(async (ev) => {
+      ev.stopPropagation();
+      const p = this.plugin.active();
+      if (!p) return;
+      if (noteId) await this.plugin.controller.unpinMessage(p.folder, noteId);
+      else await this.plugin.controller.pinMessage({ ...p, chat: this.chat }, e);
+    });
   }
 
   private copyButton(el: HTMLElement, text: string) {
@@ -391,7 +455,7 @@ export class ChatView extends ItemView {
     this.searchEl.hide();
     const icon = this.searchEl.createSpan("cd-search-icon");
     setIcon(icon, "search");
-    this.searchInput = this.searchEl.createEl("input", { type: "search", cls: "cd-search-input", attr: { placeholder: "Search this chat" } });
+    this.searchInput = this.searchEl.createEl("input", { type: "search", cls: "cd-search-input", attr: { placeholder: "Search this project's chats" } });
     const all = this.searchEl.createEl("label", { cls: "cd-search-all" });
     const cb = all.createEl("input", { type: "checkbox" });
     all.appendText(" All projects");
@@ -413,7 +477,7 @@ export class ChatView extends ItemView {
     });
     cb.addEventListener("change", () => {
       this.searchAll = cb.checked;
-      this.searchInput.placeholder = cb.checked ? "Search all projects" : "Search this chat";
+      this.searchInput.placeholder = cb.checked ? "Search all projects" : "Search this project's chats";
       this.runSearch();
     });
     close.onClickEvent(() => this.closeSearch());
@@ -423,6 +487,24 @@ export class ChatView extends ItemView {
       this.openSearch();
       return false;
     });
+    // Obsidian's own keymap sees these keys before the text box does, so the chat view
+    // claims them in its scope, only while you're typing in its input.
+    const typing = () => document.activeElement === this.inputEl;
+    this.scope.register(["Mod"], "Enter", () => {
+      if (!typing() || !this.block) return true;
+      this.submit();
+      return false;
+    });
+    this.scope.register([], "Escape", () => {
+      if (document.activeElement === this.searchInput) {
+        this.closeSearch();
+        return false;
+      }
+      if (!typing()) return true;
+      if (this.block) this.cancelBlock(); // in a chat message, Esc does nothing (and doesn't close the tab)
+      return false;
+    });
+
   }
 
   openSearch() {
@@ -455,7 +537,12 @@ export class ChatView extends ItemView {
       cls: "cd-results-count",
       text: hits.length ? `${hits.length === 100 ? "100+" : hits.length} result${hits.length === 1 ? "" : "s"}` : "No messages found",
     });
-    for (const { folder, entry } of hits) {
+    // Chat titles, for results outside Main.
+    const titles = new Map<string, string>();
+    for (const folder of new Set(hits.filter((h) => h.chat !== MAIN).map((h) => h.folder))) {
+      for (const c of await this.plugin.store.listChats(folder)) titles.set(`${folder}::${c.id}`, c.title);
+    }
+    for (const { folder, chat, entry } of hits) {
       const row = this.resultsEl.createDiv("cd-result");
       const meta = row.createDiv("cd-result-meta");
       if (this.searchAll) {
@@ -465,6 +552,7 @@ export class ChatView extends ItemView {
         tag.createSpan("cd-dot");
         tag.createSpan({ text: p?.name ?? folder });
       }
+      if (chat !== MAIN) meta.createSpan({ cls: "cd-result-chat", text: titles.get(`${folder}::${chat}`) ?? "Chat" });
       meta.createSpan({ text: entry.kind === "me" ? "You" : "AI" });
       meta.createSpan({ text: whenLabel(entry.datetime) });
       const text = row.createDiv("cd-result-text");
@@ -472,16 +560,8 @@ export class ChatView extends ItemView {
         if (part.hit) text.createEl("mark", { text: part.text });
         else text.appendText(part.text);
       }
-      row.onClickEvent(() => this.openResult(folder, entry.id));
+      row.onClickEvent(() => this.plugin.showMessage(folder, chat, entry.id));
     }
-  }
-
-  private async openResult(folder: string, id: string) {
-    if (folder !== this.folder) {
-      await this.plugin.setActive(folder);
-      await this.reload(true);
-    }
-    this.scrollToMessage(id);
   }
 
   focusInput() {
@@ -507,19 +587,11 @@ export class ChatView extends ItemView {
   // ---------- input ----------
 
   private onKey(ev: KeyboardEvent) {
-    if (ev.isComposing) return;
-    const value = this.inputEl.value;
-    if (ev.key === "Escape" && this.block) {
-      ev.preventDefault();
-      if (value.trim() && !window.confirm(`Discard ${value.trim().split("\n").length} line(s)?`)) return;
-      this.exitBlock();
-      return;
-    }
+    if (ev.isComposing || ev.defaultPrevented) return; // already handled by the view's scope
     if (ev.key !== "Enter") return;
     if (this.block) {
-      // Desktop: Enter saves, Shift+Enter adds a line. Phones have no Shift+Enter,
-      // so there Enter adds a line and the ✓ button saves.
-      if (ev.metaKey || ev.ctrlKey || (!Platform.isMobile && !ev.shiftKey)) {
+      // In a task or note, Enter adds a line; ⌘↵ / Ctrl+↵ (or the ✓ button) saves.
+      if (ev.metaKey || ev.ctrlKey) {
         ev.preventDefault();
         this.submit();
       }
@@ -528,6 +600,14 @@ export class ChatView extends ItemView {
     if (ev.shiftKey) return;
     ev.preventDefault();
     this.submit();
+  }
+
+  /** Leave task/note mode without saving (asks first if something was written). */
+  private cancelBlock() {
+    const value = this.inputEl.value.trim();
+    if (value && !window.confirm(`Discard ${value.split("\n").length} line(s)?`)) return;
+    this.exitBlock();
+    this.inputEl.focus();
   }
 
   /** Enter or the send button: send the message, or save the open task or note. */
@@ -639,15 +719,20 @@ export class ChatView extends ItemView {
     const p = this.plugin.active();
     if (!p) return;
     const uploads = this.takeFiles();
-    this.pending++;
+    // The message belongs to the chat it was sent in, even if you switch chats meanwhile.
+    const chat = this.chat;
+    const key = `${p.folder}::${chat}`;
+    this.pendingIn.set(key, (this.pendingIn.get(key) ?? 0) + 1);
     this.busyEl.setText("Thinking…");
-    this.busyEl.toggle(!/^\/[tn]\b/.test(text.trim()) || this.pending > 1);
+    this.busyEl.toggle(!/^\/[tn]\b/.test(text.trim()) || this.pendingHere() > 1);
     this.queue = this.queue
-      .then(async () => this.plugin.controller.send(p, text, await uploads))
+      .then(async () => this.plugin.controller.send({ ...p, chat }, text, await uploads))
       .catch((e) => console.error("ClearDesk:", e))
       .finally(() => {
-        this.pending--;
-        if (!this.pending) {
+        const left = (this.pendingIn.get(key) ?? 1) - 1;
+        if (left) this.pendingIn.set(key, left);
+        else this.pendingIn.delete(key);
+        if (key === `${this.folder}::${this.chat}` && !left) {
           this.liveText = null;
           this.busyEl.hide();
         }

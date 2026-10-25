@@ -1,9 +1,9 @@
 import { Events, Notice, Plugin, TAbstractFile, TFolder, WorkspaceLeaf, debounce } from "obsidian";
 import { Ai, AiSettings, DEFAULT_AI, keyProblem } from "./ai";
 import { Controller } from "./controller";
-import { taskCounts } from "./format";
+import { newId, taskCounts } from "./format";
 import { explorerScopeCss } from "./scope";
-import { COLORS, HOME, HOME_COLOR, Project, Store, isClosed } from "./store";
+import { COLORS, HOME, HOME_COLOR, MAIN, Project, Store, chatOfPath, isClosed, projectPaths } from "./store";
 import { CHAT_VIEW, ChatView } from "./views/chat";
 import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
@@ -23,6 +23,8 @@ interface Settings extends AiSettings {
   homeName: string;
   /** File explorer shows only the current project's folder. */
   explorerScope: boolean;
+  /** The chat last open in each project: folder -> chat id ("" = Main). */
+  chats: Record<string, string>;
 }
 
 const DEFAULTS: Settings = {
@@ -34,6 +36,7 @@ const DEFAULTS: Settings = {
   font: "interface",
   homeName: HOME,
   explorerScope: false, // opt-in: it changes Obsidian's file explorer
+  chats: {},
 };
 
 export interface ProjectState extends Project {
@@ -55,11 +58,12 @@ export default class ClearDesk extends Plugin {
 
   async onload() {
     this.settings = { ...DEFAULTS, ...(await this.loadData()) };
+    this.settings.chats = { ...this.settings.chats };
     this.store = new Store(this.app);
     this.store.home = this.settings.homeName || HOME;
     this.ai = new Ai(() => this.settings);
     this.controller = new Controller(this.store, this.ai, (kind, folder) => this.events.trigger(kind, folder));
-    this.controller.onStream = (folder, text, status) => this.events.trigger("stream", folder, text, status);
+    this.controller.onStream = (folder, chat, text, status) => this.events.trigger("stream", folder, chat, text, status);
     this.links = new LinkKeeper(this.store, () => this.projects, this.events);
 
     this.registerView(PROJECTS_VIEW, (leaf) => new ProjectsView(leaf, this));
@@ -285,7 +289,7 @@ export default class ClearDesk extends Plugin {
       const known = this.projects.some((x) => p === x.folder || p.startsWith(x.folder + "/"));
       if (!known && !/(^|\/)_project(\/|$)/.test(p)) continue; // new projects show up via their _project folder
       this.refreshSoon();
-      const sys = /^(.+)\/_project\/(?:(tasks|notes)\.md|(chat)\/[^/]+\.md)$/.exec(p);
+      const sys = /^(.+)\/_project\/(?:(tasks|notes)\.md|(chats?)\/[^/]+\.md)$/.exec(p);
       if (sys?.[2]) this.soon("data", sys[1]);
       if (sys?.[3]) this.soon("chat", sys[1]);
     }
@@ -293,6 +297,7 @@ export default class ClearDesk extends Plugin {
 
   async setActive(folder: string) {
     if (!this.projects.some((p) => p.folder === folder)) return;
+    if (this.pendingChat && this.pendingChat.folder !== folder) this.pendingChat = null;
     this.settings.active = folder;
     await this.saveSettings();
     this.events.trigger("active");
@@ -411,8 +416,71 @@ export default class ClearDesk extends Plugin {
     await (leaf.view as PanelView).revealNote(id);
   }
 
-  /** Open the chat and scroll to a message (used by note/task "source" links). */
-  async jumpToMessage(id: string) {
-    (await this.openChat()).scrollToMessage(id);
+  // ---------- chats ----------
+
+  /** A new chat with no messages yet; its file is created with the first message. */
+  private pendingChat: { folder: string; id: string } | null = null;
+
+  /** The chat open in the active project: the last one used there, Main by default. */
+  activeChat(): string {
+    const p = this.active();
+    if (!p) return MAIN;
+    const id = this.settings.chats[p.folder] ?? MAIN;
+    if (id === MAIN || this.store.file(projectPaths(p.folder).chatFile(id))) return id;
+    return this.pendingChat?.folder === p.folder && this.pendingChat.id === id ? id : MAIN;
+  }
+
+  isPendingChat(folder: string, id: string): boolean {
+    return this.pendingChat?.folder === folder && this.pendingChat.id === id && !this.store.file(projectPaths(folder).chatFile(id));
+  }
+
+  /** Switch to a chat (and its project); an empty new chat left behind disappears. */
+  async openChatIn(folder: string, chat: string) {
+    if (this.pendingChat && this.pendingChat.id !== chat) this.pendingChat = null;
+    this.settings.chats[folder] = chat;
+    if (folder !== this.settings.active) {
+      await this.setActive(folder); // saves settings and reloads everything
+      return;
+    }
+    await this.saveSettings();
+    this.events.trigger("chat-switch");
+    await this.openChat();
+  }
+
+  async newChat() {
+    const p = this.active();
+    if (!p) return;
+    const id = newId("c");
+    this.pendingChat = { folder: p.folder, id };
+    await this.openChatIn(p.folder, id);
+  }
+
+  async renameChat(folder: string, id: string, title: string) {
+    if (!title.trim()) return;
+    await this.store.updateChatInfo(folder, id, { title: title.trim().slice(0, 80) });
+    this.events.trigger("chat", folder);
+  }
+
+  async archiveChat(folder: string, id: string, archived: boolean) {
+    await this.store.updateChatInfo(folder, id, { archived });
+    if (archived && folder === this.settings.active && this.activeChat() === id) await this.openChatIn(folder, MAIN);
+    this.events.trigger("chat", folder);
+  }
+
+  /** Open a chat at one of its messages (search results, source links). */
+  async showMessage(folder: string, chat: string, id: string) {
+    if (folder !== this.settings.active || chat !== this.activeChat()) await this.openChatIn(folder, chat);
+    const view = await this.openChat();
+    await view.reload(true);
+    view.scrollToMessage(id);
+  }
+
+  /** Follow a link to a chat message ("Folder/_project/chats/c-…#^m-…"); false if it isn't one. */
+  async jumpToMessage(link: string): Promise<boolean> {
+    const [path, block] = link.split("#^");
+    const where = chatOfPath(path);
+    if (!where || !block) return false;
+    await this.showMessage(where.folder, where.chat, block);
+    return true;
   }
 }

@@ -47,7 +47,7 @@ const ai: any = {
   chat: async (args: any) => { tools = args.tools; report = await args.exec("show_map", mapInput); return "Here are the flats."; },
 };
 const c = new Controller(store, ai, () => {});
-c.onStream = (_f, _t, status) => { if (status) statuses.push(status); };
+c.onStream = (_f, _c, _t, status) => { if (status) statuses.push(status); };
 const project: any = { folder: "APARTMENTS", name: "APARTMENTS", home: false };
 
 // First map: Office, Nowhere, Kreuzberg and Atlantis are looked up; Flat A is coordinates.
@@ -131,3 +131,22 @@ assert.deepEqual(loose.places.map((p) => [p.name, p.color]), [["Home", "blue"], 
 assert.deepEqual([loose.circles[0].radius, loose.circles[0].label], [500, "500 m from Home"]);
 assert.deepEqual([loose.title, loose.lines.length, loose.legend.length], ["7", 0, 0]);
 console.log("loose map input ok");
+
+// Calling show_map twice in one reply: the same title replaces the first map, another title adds one.
+const twice: any = {
+  configured: true, webAccess: false,
+  chat: async ({ exec }: any) => {
+    const map = (title: string, n: number) => ({ title, places: Array.from({ length: n }, (_, i) => ({ name: `P${i}`, address: `52.5${i}, 13.4` })) });
+    await exec("show_map", map("Must-sees", 2));
+    report = await exec("show_map", map("Must-sees", 3));
+    await exec("show_map", map("Food", 1));
+    return "Here.";
+  },
+};
+const c2 = new Controller(store, twice, () => {});
+await c2.send(project, "map things");
+const body = chat[chat.length - 1].body;
+const blocks = body.match(/```cleardesk-map\n(.*?)\n```/gs)!.map((b: string) => parseMap(b.split("\n").slice(1, -1).join("\n"))!);
+assert.deepEqual(blocks.map((b: any) => [b.title, b.places.length]), [["Must-sees", 3], ["Food", 1]]);
+assert.match(report, /^This replaces your earlier map/);
+console.log("repeated map replaced ok");

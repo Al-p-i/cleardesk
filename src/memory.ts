@@ -3,6 +3,7 @@
 // Pure functions, so they can be unit-tested.
 
 import { Entry, feedOrder, matchesAll, queryWords } from "./format";
+import { mapsAsText } from "./map";
 
 /** How many unpinned items Claude sees; the panel draws its line after them. */
 export const CONTEXT_ITEMS = 30;
@@ -44,6 +45,8 @@ export function historySize(total: number, keep = 40, step = 20): number {
   return total <= keep ? total : keep + ((total - keep) % step);
 }
 
+const cut = (text: string, max: number) => (text.length > max ? text.slice(0, max).trimEnd() + " …(cut)" : text);
+
 /** Past this many pinned items the panel suggests unpinning: all of them go with every message. */
 export const MANY_PINS = 15;
 
@@ -53,7 +56,7 @@ export function noteLine(e: Entry, max = 1500): string {
   const flags = [e.meta.pinned === "true" ? "pinned" : "", e.meta["replaced-by"] ? `replaced by ${e.meta["replaced-by"]}` : ""]
     .filter(Boolean)
     .join(", ");
-  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${e.body.length > max ? e.body.slice(0, max).trimEnd() + " …(cut)" : e.body}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
+  return `[${e.id}] ${e.datetime} ${e.kind}${flags ? ` (${flags})` : ""}${tag}: ${cut(mapsAsText(e.body), max)}${e.meta.url ? ` <${e.meta.url}>` : ""}`;
 }
 
 /**

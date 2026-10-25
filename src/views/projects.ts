@@ -1,7 +1,7 @@
 import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
-import { COLORS, isClosed, projectPaths } from "../store";
+import { COLORS, ChatInfo, MAIN, isClosed, projectPaths } from "../store";
 import { agoLabel, openTasksLabel, updatedLabel } from "../format";
 
 export const PROJECTS_VIEW = "cleardesk-projects";
@@ -13,8 +13,15 @@ const STATUS: Record<string, { icon: string; label: string }> = {
   archived: { icon: "archive", label: "Archived" },
 };
 
+/** Chats shown under the active project before "Show all". */
+const CHATS_SHOWN = 8;
+
 export class ProjectsView extends ItemView {
   private showClosed = false;
+  private showAllChats = false;
+  private showArchivedChats = false;
+  /** Ignores a slow chat list that a newer render has replaced. */
+  private chatsToken = 0;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClearDesk) {
     super(leaf);
@@ -28,6 +35,12 @@ export class ProjectsView extends ItemView {
     this.registerEvent(this.plugin.events.on("projects", () => this.render()));
     this.registerEvent(this.plugin.events.on("active", () => this.render()));
     this.registerEvent(this.plugin.events.on("tick", () => this.render()));
+    this.registerEvent(this.plugin.events.on("chat-switch", () => this.render()));
+    this.registerEvent(
+      this.plugin.events.on("chat", (folder: unknown) => {
+        if (folder === this.plugin.active()?.folder) this.render();
+      })
+    );
     this.render();
   }
 
@@ -81,6 +94,85 @@ export class ProjectsView extends ItemView {
     if (p.updated) row.createSpan({ cls: "cd-updated", text: agoLabel(p.updated), attr: { "aria-label": updatedLabel(p.updated) } });
     row.onClickEvent(() => this.plugin.setActive(p.folder));
     row.addEventListener("contextmenu", (ev) => this.menu(ev, p.folder));
+    if (p.folder === active?.folder) this.renderChats(list.createDiv("cd-chats"), p);
+  }
+
+  // ---------- the active project's chats ----------
+
+  private renderChats(box: HTMLElement, p: ProjectState) {
+    box.style.setProperty("--cd-color", p.color);
+    const token = ++this.chatsToken;
+    this.plugin.store.listChats(p.folder).then((chats) => {
+      if (token !== this.chatsToken) return;
+      const current = this.plugin.activeChat();
+      const open = chats.filter((c) => !c.archived);
+      const archived = chats.filter((c) => c.archived);
+      this.chatRow(box, p, MAIN, "Main");
+      if (this.plugin.isPendingChat(p.folder, current)) this.chatRow(box, p, current, "New chat");
+      const shown = this.showAllChats ? open : open.slice(0, CHATS_SHOWN);
+      // The open chat stays visible even when it's beyond the first few.
+      const extra = open.find((c) => c.id === current && !shown.includes(c));
+      for (const c of extra ? [...shown, extra] : shown) this.chatRow(box, p, c.id, c.title, c);
+      if (open.length > CHATS_SHOWN) {
+        const more = box.createDiv({ cls: "cd-chats-toggle", text: this.showAllChats ? "Show fewer" : `Show all (${open.length})` });
+        more.onClickEvent(() => { this.showAllChats = !this.showAllChats; this.render(); });
+      }
+      const add = box.createDiv("cd-chat-row cd-chat-new");
+      setIcon(add.createSpan("cd-new-icon"), "plus");
+      add.createSpan({ text: "New chat" });
+      add.onClickEvent(() => this.plugin.newChat());
+      if (archived.length) {
+        const toggle = box.createDiv({ cls: "cd-chats-toggle", text: `${this.showArchivedChats ? "▾" : "▸"} Archived (${archived.length})` });
+        toggle.onClickEvent(() => { this.showArchivedChats = !this.showArchivedChats; this.render(); });
+        if (this.showArchivedChats) for (const c of archived) this.chatRow(box, p, c.id, c.title, c);
+      }
+    });
+  }
+
+  private chatRow(box: HTMLElement, p: ProjectState, id: string, title: string, info?: ChatInfo) {
+    const current = this.plugin.activeChat() === id;
+    const pending = this.plugin.isPendingChat(p.folder, id);
+    const row = box.createDiv({
+      cls: "cd-chat-row" + (current ? " is-current" : "") + (pending ? " is-pending" : "") + (info?.archived ? " is-archived" : ""),
+    });
+    const name = row.createSpan({ cls: "cd-chat-row-name", text: title });
+    if (this.plugin.controller.isBusy(p.folder, id)) row.createSpan({ cls: "cd-chat-busy", attr: { "aria-label": "Claude is replying" } });
+    if (info?.updated) {
+      const ms = new Date(info.updated.replace(" ", "T")).getTime();
+      row.createSpan({ cls: "cd-updated", text: agoLabel(ms), attr: { "aria-label": updatedLabel(ms) } });
+    }
+    row.onClickEvent(() => this.plugin.openChatIn(p.folder, id));
+    if (!info) return; // Main and an unsaved new chat have no menu
+    row.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle("Rename").setIcon("pencil").onClick(() => this.renameInline(name, p.folder, info)));
+      menu.addItem((i) =>
+        i.setTitle(info.archived ? "Unarchive" : "Archive").setIcon(info.archived ? "archive-restore" : "archive")
+          .onClick(() => this.plugin.archiveChat(p.folder, info.id, !info.archived))
+      );
+      menu.showAtMouseEvent(ev);
+    });
+  }
+
+  private renameInline(name: HTMLElement, folder: string, info: ChatInfo) {
+    const input = createEl("input", { type: "text", cls: "cd-chat-rename", value: info.title });
+    name.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      if (save && input.value.trim() && input.value.trim() !== info.title) await this.plugin.renameChat(folder, info.id, input.value);
+      else this.render();
+    };
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") finish(true);
+      if (ev.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
   }
 
   private menu(ev: MouseEvent, folder: string) {
