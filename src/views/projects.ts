@@ -1,7 +1,7 @@
-import { ItemView, Menu, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Menu, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
-import { COLORS, ChatInfo, MAIN, isClosed, projectPaths } from "../store";
+import { COLORS, ChatInfo, isClosed, projectPaths } from "../store";
 import { agoLabel, openTasksLabel, updatedLabel } from "../format";
 
 export const PROJECTS_VIEW = "cleardesk-projects";
@@ -78,7 +78,8 @@ export class ProjectsView extends ItemView {
     const closed = isClosed(p.status);
     const row = list.createDiv({ cls: "cd-project" + (p.folder === active?.folder ? " is-active" : "") + (closed ? " is-closed" : "") });
     row.style.setProperty("--cd-color", p.color);
-    row.createSpan("cd-dot");
+    if (p.home) setIcon(row.createSpan({ cls: "cd-home-icon", attr: { "aria-label": "Desk: sees all your projects" } }), "inbox");
+    else row.createSpan("cd-dot");
     row.createSpan({ cls: "cd-project-name", text: p.name });
     const st = STATUS[p.status];
     if (st) {
@@ -92,7 +93,9 @@ export class ProjectsView extends ItemView {
       badge.createSpan({ text: String(p.openTasks) });
     }
     if (p.updated) row.createSpan({ cls: "cd-updated", text: agoLabel(p.updated), attr: { "aria-label": updatedLabel(p.updated) } });
-    row.onClickEvent(() => this.plugin.setActive(p.folder));
+    // On a phone the projects list is a drawer: tapping a project expands its chats there,
+    // and tapping a chat opens it. On desktop it opens the project's last chat right away.
+    row.onClickEvent(() => this.plugin.setActive(p.folder, { openChat: !Platform.isMobile }));
     row.addEventListener("contextmenu", (ev) => this.menu(ev, p.folder));
     if (p.folder === active?.folder) this.renderChats(list.createDiv("cd-chats"), p);
   }
@@ -102,12 +105,12 @@ export class ProjectsView extends ItemView {
   private renderChats(box: HTMLElement, p: ProjectState) {
     box.style.setProperty("--cd-color", p.color);
     const token = ++this.chatsToken;
-    this.plugin.store.listChats(p.folder).then((chats) => {
+    // All chats alike, the first one (named after the project) included, newest activity first.
+    this.plugin.store.allChats(p.folder).then((chats) => {
       if (token !== this.chatsToken) return;
       const current = this.plugin.activeChat();
       const open = chats.filter((c) => !c.archived);
       const archived = chats.filter((c) => c.archived);
-      this.chatRow(box, p, MAIN, "Main");
       if (this.plugin.isPendingChat(p.folder, current)) this.chatRow(box, p, current, "New chat");
       const shown = this.showAllChats ? open : open.slice(0, CHATS_SHOWN);
       // The open chat stays visible even when it's beyond the first few.
@@ -142,7 +145,7 @@ export class ProjectsView extends ItemView {
       row.createSpan({ cls: "cd-updated", text: agoLabel(ms), attr: { "aria-label": updatedLabel(ms) } });
     }
     row.onClickEvent(() => this.plugin.openChatIn(p.folder, id));
-    if (!info) return; // Main and an unsaved new chat have no menu
+    if (!info) return; // an unsaved new chat has no menu
     row.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
       const menu = new Menu();
@@ -199,9 +202,9 @@ export class ProjectsView extends ItemView {
         menu.addItem((i) => i.setTitle("Archive").setIcon("archive").onClick(status("archived")));
       }
     }
-    menu.addSeparator();
     const names = ["Teal", "Purple", "Coral", "Pink", "Blue", "Amber", "Green", "Red"];
-    COLORS.forEach((c, k) => {
+    if (!p.home) menu.addSeparator(); // Desk has no colour to choose
+    (p.home ? [] : COLORS).forEach((c, k) => {
       menu.addItem((i) => {
         i.setTitle(`Color: ${names[k]}`).setChecked(p.color === c).onClick(() => save((m) => ({ ...m, color: c })));
         (i as any).dom?.style?.setProperty("--cd-swatch", c);

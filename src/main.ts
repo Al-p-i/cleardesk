@@ -3,7 +3,7 @@ import { Ai, AiSettings, DEFAULT_AI, keyProblem } from "./ai";
 import { Controller } from "./controller";
 import { newId, taskCounts } from "./format";
 import { explorerScopeCss } from "./scope";
-import { COLORS, HOME, HOME_COLOR, MAIN, Project, Store, chatOfPath, isClosed, projectPaths } from "./store";
+import { COLORS, HOME, HOME_COLOR, HOME_INK, MAIN, Project, Store, chatOfPath, isClosed, projectPaths } from "./store";
 import { CHAT_VIEW, ChatView } from "./views/chat";
 import { PANEL_VIEW, PanelView } from "./views/panel";
 import { PROJECTS_VIEW, ProjectsView } from "./views/projects";
@@ -284,7 +284,14 @@ export default class ClearDesk extends Plugin {
       const meta = await this.store.readMeta(p.folder);
       const tasks = await this.store.tasks(p.folder);
       const counts = taskCounts(tasks);
-      out.push({ ...p, ...meta, openTasks: counts.open, overdueTasks: counts.overdue, updated: this.store.lastUpdate(p.folder) });
+      out.push({
+        ...p,
+        ...meta,
+        ...(p.home ? { color: HOME_INK } : {}),
+        openTasks: counts.open,
+        overdueTasks: counts.overdue,
+        updated: this.store.lastUpdate(p.folder),
+      });
     }
     out.sort((a, b) =>
       a.home !== b.home ? (a.home ? -1 : 1) : a.order - b.order || a.name.localeCompare(b.name)
@@ -325,7 +332,8 @@ export default class ClearDesk extends Plugin {
     }
   }
 
-  async setActive(folder: string) {
+  /** Switch project; `openChat: false` keeps the current view (the projects list stays in front). */
+  async setActive(folder: string, opts: { openChat?: boolean } = {}) {
     if (!this.projects.some((p) => p.folder === folder)) return;
     if (this.pendingChat && this.pendingChat.folder !== folder) this.pendingChat = null;
     this.settings.active = folder;
@@ -333,7 +341,7 @@ export default class ClearDesk extends Plugin {
     this.events.trigger("active");
     this.applyExplorerScope();
     if (this.settings.explorerScope && folder !== this.store.home) this.followExplorer(folder);
-    await this.openChat();
+    if (opts.openChat !== false) await this.openChat();
   }
 
   /** Set a project's status ("" | at-risk | blocked | done | archived). */
@@ -405,7 +413,8 @@ export default class ClearDesk extends Plugin {
     let projects = ws.getLeavesOfType(PROJECTS_VIEW)[0];
     if (!projects) {
       const explorer = ws.getLeavesOfType("file-explorer")[0];
-      projects = explorer ? ws.createLeafBySplit(explorer, "horizontal", true) : (ws.getLeftLeaf(false) as WorkspaceLeaf);
+      // Desktop: under the file explorer. Phones don't split sidebar panes, so there it's its own tab in the left drawer.
+      projects = explorer && !Platform.isMobile ? ws.createLeafBySplit(explorer, "horizontal", true) : (ws.getLeftLeaf(false) as WorkspaceLeaf);
       await projects.setViewState({ type: PROJECTS_VIEW, active: false });
     }
     let panel = ws.getLeavesOfType(PANEL_VIEW)[0];
@@ -523,7 +532,11 @@ export default class ClearDesk extends Plugin {
 
   async archiveChat(folder: string, id: string, archived: boolean) {
     await this.store.updateChatInfo(folder, id, { archived });
-    if (archived && folder === this.settings.active && this.activeChat() === id) await this.openChatIn(folder, MAIN);
+    // Archiving the open chat moves to the most recent chat still open (if there is one).
+    if (archived && folder === this.settings.active && this.activeChat() === id) {
+      const next = (await this.store.allChats(folder)).find((c) => !c.archived);
+      if (next) await this.openChatIn(folder, next.id);
+    }
     this.events.trigger("chat", folder);
   }
 

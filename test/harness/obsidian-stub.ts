@@ -14,4 +14,4 @@ export class TFolder { path = ""; name = ""; children: any[] = []; }
 export function arrayBufferToBase64(b: ArrayBuffer) { return Buffer.from(b).toString("base64"); }
 export const normalizePath = (p: string) => p.replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
 export const parseYaml = (s: string) => JSON.parse(s || "{}");
-export const stringifyYaml = (o: unknown) => JSON.stringify(o);
+export const stringifyYaml = (o: unknown) => JSON.stringify(o) + "\n"; // ends with a newline, like Obsidian's

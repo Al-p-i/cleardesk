@@ -161,9 +161,11 @@ export class ChatView extends ItemView {
   private renderHeader() {
     const p = this.plugin.active();
     this.contentEl.style.setProperty("--cd-color", p?.color ?? "var(--interactive-accent)");
+    this.contentEl.toggleClass("is-home", !!p?.home);
     this.headerEl.empty();
     const title = this.headerEl.createSpan({ cls: "cd-chat-title", text: p ? p.name : "No project" });
-    if (p && this.chat !== MAIN) {
+    // "APARTMENTS › Contract questions"; just "APARTMENTS" for the chat named after the project.
+    if (p && this.chatTitle && this.chatTitle.toLowerCase() !== p.name.toLowerCase()) {
       title.createSpan({ cls: "cd-chat-sep", text: " › " });
       title.createSpan({ cls: "cd-chat-name", text: this.chatTitle });
     }
@@ -217,8 +219,8 @@ export class ChatView extends ItemView {
       this.liveText = null;
       this.setBusy("");
     }
-    if (p && this.chat !== MAIN) {
-      const info = (await this.plugin.store.listChats(p.folder)).find((c) => c.id === this.chat);
+    if (p) {
+      const info = (await this.plugin.store.allChats(p.folder)).find((c) => c.id === this.chat);
       this.chatTitle = info?.title ?? "New chat";
     }
     this.renderHeader();
@@ -537,10 +539,10 @@ export class ChatView extends ItemView {
       cls: "cd-results-count",
       text: hits.length ? `${hits.length === 100 ? "100+" : hits.length} result${hits.length === 1 ? "" : "s"}` : "No messages found",
     });
-    // Chat titles, for results outside Main.
+    // Which chat each result is in.
     const titles = new Map<string, string>();
-    for (const folder of new Set(hits.filter((h) => h.chat !== MAIN).map((h) => h.folder))) {
-      for (const c of await this.plugin.store.listChats(folder)) titles.set(`${folder}::${c.id}`, c.title);
+    for (const folder of new Set(hits.map((h) => h.folder))) {
+      for (const c of await this.plugin.store.allChats(folder)) titles.set(`${folder}::${c.id}`, c.title);
     }
     for (const { folder, chat, entry } of hits) {
       const row = this.resultsEl.createDiv("cd-result");
@@ -552,7 +554,7 @@ export class ChatView extends ItemView {
         tag.createSpan("cd-dot");
         tag.createSpan({ text: p?.name ?? folder });
       }
-      if (chat !== MAIN) meta.createSpan({ cls: "cd-result-chat", text: titles.get(`${folder}::${chat}`) ?? "Chat" });
+      meta.createSpan({ cls: "cd-result-chat", text: titles.get(`${folder}::${chat}`) ?? "Chat" });
       meta.createSpan({ text: entry.kind === "me" ? "You" : "AI" });
       meta.createSpan({ text: whenLabel(entry.datetime) });
       const text = row.createDiv("cd-result-text");

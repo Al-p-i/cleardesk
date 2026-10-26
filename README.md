@@ -19,7 +19,8 @@ Switch between your projects, talk to each one in a chat, and see its state at a
 
 - **Projects**: each project is a folder in your vault, with its own colour. Switch with a click; the default project (Desk) is always at the top. Mark projects as at risk, blocked, done or archived; done and archived ones fold away.
 - **Chat as the main interface**: ask questions about the project. Claude answers with the project's tasks, notes, facts and files in mind, and streams its reply. When you explicitly ask, it can also reschedule, reword or delete tasks and edit or delete notes; every change gets a receipt with undo.
-- **Separate chats**: each project has its Main chat plus as many topic chats as you like, listed under the open project in the left panel (titled automatically, renamable, archivable). Every chat shares the project's panel, so a fact or task from one chat is known in all of them; Claude reads only the current chat's conversation.
+- **Desk sees everything**: the Desk chat gets a short overview of every project (goal, key facts, open and overdue tasks) and can look inside or search any of them, read-only. Ask it "what's overdue everywhere?" or "give me a status of all my projects". Every other project's chat sees only that project.
+- **Separate chats**: each project starts with a chat named after it and can have as many more as you like, listed under the open project in the left panel by recent activity (new ones titled automatically; all renamable and archivable). Every chat shares the project's panel, so a fact or task from one chat is known in all of them; Claude reads only the current chat's conversation.
 - **Quick capture**:
   - `/t call the agency fri`: a task, with the date understood
   - `/n kreuzberg is loud`: a note, auto-tagged
@@ -75,7 +76,7 @@ APARTMENTS/
     project.md        colour, goal, status, order, key facts (frontmatter)
     tasks.md          - [ ] Send payslips 🔗 [[source]] 📅 2026-10-20 ^t-k2j3a   (Obsidian Tasks format)
     notes.md          ### 2026-10-17 15:10 · note · Kreuzberg ^n-k3j2a  + text
-    chat/2026-10.md   Main chat, one file per month: ### 2026-10-17 14:32 · me ^m-abc123  + message (maps are ```cleardesk-map blocks in replies)
+    chat/2026-10.md   the first chat, one file per month (its title, if renamed, is in project.md): ### 2026-10-17 14:32 · me ^m-abc123  + message (maps are ```cleardesk-map blocks in replies)
     chats/c-k2j3a.md  another chat: title in its frontmatter, messages in the same format
     places.json       places already found for maps, so they aren't looked up twice
     attachments.json  fingerprints of attached files, to find them after moves

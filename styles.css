@@ -22,6 +22,8 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-project:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .cd-project.is-active { background: var(--background-modifier-active-hover); color: var(--text-normal); }
 .cd-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cd-color); flex: none; }
+.cd-home-icon { display: inline-flex; flex: none; color: var(--text-normal); margin: 0 -2px; }
+.cd-home-icon svg { width: 13px; height: 13px; }
 .cd-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cd-status { color: var(--text-warning); display: inline-flex; }
 .cd-status svg { width: 13px; height: 13px; }
@@ -111,6 +113,7 @@ body.cd-font-text { --cd-font: var(--font-text); }
 .cd-attach svg { width: 16px; height: 16px; }
 .cleardesk button.cd-send { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0 0 3px 2px; padding: 0; border: none; box-shadow: none; border-radius: 50%; background: var(--background-modifier-border); color: var(--text-faint); cursor: pointer; transition: background 0.12s, color 0.12s; }
 .cleardesk button.cd-send.is-ready { background: var(--cd-color); color: var(--text-on-accent); }
+.cleardesk.is-home button.cd-send.is-ready { color: var(--background-primary); } /* Desk's colour is the text colour */
 .cleardesk button.cd-send.is-ready:hover { filter: brightness(1.08); }
 .cd-send svg { width: 15px; height: 15px; stroke-width: 2.5; }
 

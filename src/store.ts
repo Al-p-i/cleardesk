@@ -15,6 +15,9 @@ export const COLORS = [
   "#1D9E75", "#7F77DD", "#D85A30", "#D4537E", "#378ADD", "#BA7517", "#639922", "#E24B4A",
 ];
 export const HOME_COLOR = "#888780";
+/** Desk isn't about one topic, so it has no colour of its own: the theme's text colour
+ * (near-black in light mode, near-white in dark), whatever its project.md says. */
+export const HOME_INK = "var(--text-normal)";
 
 export interface KeyFact { label: string; value: string }
 
@@ -29,6 +32,10 @@ export interface ProjectMeta {
   status: string; // "" | at-risk | blocked | done | archived
   order: number;
   key_facts: KeyFact[];
+  /** The first chat's title, when renamed (otherwise it's named after the project). */
+  chat_title?: string;
+  /** The first chat is archived. */
+  chat_archived?: boolean;
 }
 
 export interface Project extends ProjectMeta {
@@ -38,7 +45,8 @@ export interface Project extends ProjectMeta {
   home: boolean;
 }
 
-/** A project's Main chat: the original log, one file per month under chat/. */
+/** A project's first chat, named after the project unless renamed. It's an ordinary chat, but
+ * stored the original way: one file per month under chat/ (its title is in project.md). */
 export const MAIN = "";
 
 /** A chat other than Main: one file under chats/, named by its id. */
@@ -189,6 +197,8 @@ export class Store {
       key_facts: facts
         .filter((x: any) => x && typeof x.label === "string")
         .map((x: any) => ({ label: String(x.label), value: String(x.value ?? "") })),
+      ...(typeof fm.chat_title === "string" && fm.chat_title.trim() ? { chat_title: fm.chat_title.trim() } : {}),
+      ...(fm.chat_archived === true ? { chat_archived: true } : {}),
     };
   }
 
@@ -203,6 +213,8 @@ export class Store {
         status: next.status,
         order: next.order,
         key_facts: next.key_facts,
+        ...(next.chat_title ? { chat_title: next.chat_title } : {}),
+        ...(next.chat_archived ? { chat_archived: true } : {}),
       };
       return `---\n${stringifyYaml(fm)}---\n${body || PROJECT_BODY}`;
     }, tx);
@@ -334,6 +346,15 @@ export class Store {
     await this.modify(this.chatPath(folder, chat, entry.datetime), (text) => updateEntry(text, entry.id, fn));
   }
 
+  /** Time of Main's last message (YYYY-MM-DD HH:MM), or "" if it has none. */
+  async mainUpdated(folder: string): Promise<string> {
+    for (const path of this.chatPaths(folder, MAIN).reverse()) {
+      const entries = await this.chatEntries(path);
+      if (entries.length) return entries[entries.length - 1].datetime;
+    }
+    return "";
+  }
+
   /** The project's chats other than Main, most recently active first. */
   async listChats(folder: string): Promise<ChatInfo[]> {
     const out: ChatInfo[] = [];
@@ -358,8 +379,34 @@ export class Store {
     return out.sort((a, b) => b.updated.localeCompare(a.updated));
   }
 
+  /** Every chat of a project, the first one included, most recently active first. */
+  async allChats(folder: string): Promise<ChatInfo[]> {
+    const [others, meta, updated] = await Promise.all([this.listChats(folder), this.readMeta(folder), this.mainUpdated(folder)]);
+    const first: ChatInfo = {
+      id: MAIN,
+      title: meta.chat_title || folder.split("/").pop()!,
+      created: "",
+      archived: meta.chat_archived === true,
+      updated,
+    };
+    return [first, ...others].sort((a, b) => b.updated.localeCompare(a.updated));
+  }
+
   /** Rename or (un)archive a chat. */
   async updateChatInfo(folder: string, id: string, patch: Partial<Pick<ChatInfo, "title" | "archived">>) {
+    if (id === MAIN) {
+      // The first chat's title and state live in project.md; its messages stay where they are.
+      const name = folder.split("/").pop()!;
+      await this.writeMeta(folder, (m) => {
+        const title = patch.title !== undefined ? patch.title.trim() : m.chat_title;
+        return {
+          ...m,
+          chat_title: title && title !== name ? title : undefined,
+          chat_archived: patch.archived ?? m.chat_archived,
+        };
+      });
+      return;
+    }
     const info = (await this.listChats(folder)).find((c) => c.id === id);
     if (!info) return;
     const next = { title: patch.title ?? info.title, created: info.created, archived: patch.archived ?? info.archived };

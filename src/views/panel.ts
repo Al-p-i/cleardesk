@@ -3,7 +3,7 @@ import { MANY_PINS, notesContext } from "../memory";
 import type ClearDesk from "../main";
 import type { ProjectState } from "../main";
 import { Entry, Task, daysUntil, dueLabel, feedOrder, hostOf, isoDate, plainLinks, sortOpenTasks, splitEmbeds, whenLabel } from "../format";
-import { MAIN, ProjectMeta, chatOfPath } from "../store";
+import { ProjectMeta, chatOfPath } from "../store";
 import { appendLinkified, openExternal } from "./links";
 import { renderAttachments } from "./attachments";
 
@@ -97,7 +97,7 @@ export class PanelView extends ItemView {
       store.readMeta(p.folder),
       store.tasks(p.folder),
       store.notes(p.folder),
-      store.listChats(p.folder),
+      store.allChats(p.folder),
     ]);
     this.chatTitles = new Map(chats.map((c) => [c.id, c.title]));
     this.removeChild(this.md);
@@ -498,12 +498,12 @@ export class PanelView extends ItemView {
     });
   }
 
-  /** "From Main" / "From chat · Contract questions", from the link back to the message. */
+  /** "From chat · Contract questions", from the link back to the message. */
   private messageFrom(n: Entry): string {
     const m = /\[\[([^\]|#]+)/.exec(n.meta.source ?? "");
     const chat = m ? chatOfPath(m[1])?.chat : undefined;
-    if (chat === undefined) return "From chat";
-    return chat === MAIN ? "From Main" : `From chat · ${this.chatTitles.get(chat) ?? "archived chat"}`;
+    const title = chat === undefined ? undefined : this.chatTitles.get(chat);
+    return title ? `From chat · ${title}` : "From chat";
   }
 
   private async setPinned(p: ProjectState, id: string, pinned: boolean) {

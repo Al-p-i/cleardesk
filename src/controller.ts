@@ -3,10 +3,11 @@ import { TFile, arrayBufferToBase64, requestUrl } from "obsidian";
 import { cleanExport, googleExportUrl, looksLikeLoginPage } from "./google";
 import { Ai, ToolOutput, keyProblem } from "./ai";
 import {
-  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, splitEmbeds, splitUrls, taskTitle, withEmbeds,
+  Entry, Task, dueLabel, isoDate, linkLabel, newId, pageTitle, parseTaskLine, plainLinks, queryWords, sortOpenTasks, splitEmbeds, splitUrls,
+  taskTitle, withEmbeds,
 } from "./format";
 import { parseMessage } from "./input";
-import { KeyFact, MAIN, Project, Store, Tx, projectPaths } from "./store";
+import { KeyFact, MAIN, Project, Store, Tx, isClosed, projectPaths } from "./store";
 import { moveTarget, projectPath, relPath } from "./paths";
 import { filesSummary, historySize, noteLine, notesContext, sameStatement, searchNotes } from "./memory";
 
@@ -464,8 +465,8 @@ export class Controller {
         case "search_chat": {
           // Same search as the chat's search bar: every word must appear.
           const hits = await this.store.searchChat([project.folder], queryWords(s("query")), 25);
-          const titles = new Map((await this.store.listChats(project.folder)).map((c) => [c.id, c.title]));
-          const where = (c: string) => (c === chat ? "this chat" : c === MAIN ? "Main chat" : `chat "${titles.get(c) ?? c}"`);
+          const titles = new Map((await this.store.allChats(project.folder)).map((c) => [c.id, c.title]));
+          const where = (c: string) => (c === chat ? "this chat" : `chat "${titles.get(c) ?? "untitled"}"`);
           return hits.length
             ? hits.map(({ chat: c, entry: e }) => `${e.datetime} (${where(c)}) ${e.kind === "me" ? "owner" : "you"}: ${blocksAsText(e.body).slice(0, 400)}`).join("\n")
             : "Nothing found. Try fewer or different words.";
@@ -476,6 +477,29 @@ export class Controller {
           await this.store.modify(path, () => md + "\n", tx);
           receipts.push(`📄 Created [[${path.replace(/\.md$/, "")}|${s("title")}]]`);
           return `Created ${path.slice(project.folder.length + 1)}.`;
+        }
+        case "read_project": {
+          const other = this.findProject(s("project"));
+          if (!other) return `No project called "${s("project")}". Projects: ${this.store.listProjects().map((x) => x.name).join(", ")}.`;
+          return `${(await this.context(other)).text}\n(Read-only from Desk: to change anything here, the owner opens ${other.name}.)`;
+        }
+        case "search_projects": {
+          const words = queryWords(s("query"));
+          if (!words.length) return "Give some words to search for.";
+          const one = s("project") ? this.findProject(s("project")) : null;
+          if (s("project") && !one) return `No project called "${s("project")}".`;
+          const scope = one ? [one] : this.store.listProjects();
+          const out: string[] = [];
+          for (const p of scope) {
+            const hits = searchNotes(await this.store.notes(p.folder), s("query"), "", "").slice(0, 8);
+            for (const n of hits) out.push(`[${p.name}] ${noteLine(n, 400)}`);
+          }
+          const chats = await this.store.searchChat(scope.map((p) => p.folder), words, 15);
+          const name = (folder: string) => scope.find((p) => p.folder === folder)?.name ?? folder;
+          for (const { folder, entry: e } of chats) {
+            out.push(`[${name(folder)} chat] ${e.datetime} ${e.kind === "me" ? "owner" : "you"}: ${blocksAsText(e.body).slice(0, 300)}`);
+          }
+          return out.length ? out.join("\n") : "Nothing found. Try fewer or different words.";
         }
         case "add_calendar_event": {
           const ev = eventFromInput(input);
@@ -518,7 +542,7 @@ export class Controller {
         context: ctx.text,
         history,
         user: await this.userContent(project, me.body),
-        tools: this.ai.webAccess ? [...TOOLS, GOOGLE_TOOL, ...WEB_TOOLS] : TOOLS,
+        tools: [...TOOLS, ...(project.home ? DESK_TOOLS : []), ...(this.ai.webAccess ? [GOOGLE_TOOL, ...WEB_TOOLS] : [])],
         exec,
         onText: (d) => { live += d; status = ""; push(); },
         onTool: (name) => { status = TOOL_STATUS[name] ?? "Working…"; push(); },
@@ -562,6 +586,44 @@ export class Controller {
     while (msgs.length && msgs[0].role === "assistant") msgs.shift();
     if (msgs.length && msgs[msgs.length - 1].role === "user") msgs.push({ role: "assistant", text: "(no reply)" });
     return msgs.map((m) => ({ role: m.role, content: m.text }));
+  }
+
+  /** A project by name or folder, for Desk's read-only tools. */
+  private findProject(name: string): Project | null {
+    const n = name.trim().toLowerCase();
+    return this.store.listProjects().find((p) => p.name.toLowerCase() === n || p.folder.toLowerCase() === n) ?? null;
+  }
+
+  /** For Desk: one short entry per project, so it can answer questions across all of them. */
+  private async allProjects(): Promise<string> {
+    const today = isoDate();
+    const open: string[] = [];
+    const closed: string[] = [];
+    const short = (t: string, n: number) => (t.length > n ? t.slice(0, n).trimEnd() + "…" : t);
+    for (const p of this.store.listProjects().filter((x) => !x.home).sort((a, b) => a.name.localeCompare(b.name))) {
+      const [meta, tasks] = await Promise.all([this.store.readMeta(p.folder), this.store.tasks(p.folder)]);
+      if (isClosed(meta.status)) {
+        closed.push(`${p.name} (${meta.status})`);
+        continue;
+      }
+      const todo = sortOpenTasks(tasks.filter((t) => !t.done));
+      const overdue = todo.filter((t) => t.due && t.due < today).length;
+      const next = todo.filter((t) => t.due).slice(0, 3).map((t) => `${short(plainLinks(taskTitle(t.text)), 80)} (due ${t.due})`);
+      open.push(
+        [
+          `## ${p.name}${meta.status ? ` [${meta.status}]` : ""}`,
+          `Goal: ${meta.goal ? short(meta.goal, 200) : "(not set)"}`,
+          ...(meta.key_facts.length ? [`Key facts: ${meta.key_facts.map((f: KeyFact) => `${f.label}: ${f.value}`).join("; ")}`] : []),
+          `Tasks: ${todo.length} open${overdue ? `, ${overdue} overdue` : ""}${next.length ? `; next due: ${next.join("; ")}` : ""}`,
+        ].join("\n")
+      );
+    }
+    return `<all_projects>
+You're in Desk, the owner's default project. Besides Desk itself you can see every project below. Use read_project to see one in full (its tasks, pinned items and notes) and search_projects to search the notes and chats of one or all of them. This is read-only: you can't add or change anything in other projects; to do that, the owner opens that project.
+
+${open.join("\n\n") || "(no other open projects)"}
+${closed.length ? `\nDone or archived: ${closed.join(", ")}` : ""}
+</all_projects>`;
   }
 
   /** The project as text for the model, plus id lookups for tools. */
@@ -610,7 +672,7 @@ ${noteLines.join("\n") || "(none)"}${olderLine}
 
 Files in the project folder (overview; use list_files for details):
 ${files.join("\n") || "(none)"}
-</project>`;
+</project>${project.home ? "\n\n" + (await this.allProjects()) : ""}`;
     return { text, taskById };
   }
 
@@ -719,6 +781,8 @@ const TOOL_STATUS: Record<string, string> = {
   create_document: "Writing the document… (can take a minute)",
   show_map: "Making the map…",
   add_calendar_event: "Preparing the event…",
+  read_project: "Looking at the project…",
+  search_projects: "Searching your projects…",
 };
 
 // Strict (schema-guaranteed input) only for tools that change things: the API compiles all
@@ -814,6 +878,17 @@ const TOOLS: BetaTool[] = [
     title: { type: "string", description: "Document title, also the file name." },
     brief: { type: "string", description: "Everything the document must contain, and which facts to use." },
   }),
+];
+
+/** Desk only: read-only views into the other projects. */
+const DESK_TOOLS: BetaTool[] = [
+  tool("read_project", "See one of the owner's projects in full: card, open tasks, pinned items and recent notes. Read-only.", {
+    project: { type: "string", description: "Project name, as in the overview." },
+  }, false),
+  tool("search_projects", "Search the notes, facts, links and chats of all the owner's projects, or of one. Every word must appear. Read-only.", {
+    query: { type: "string", description: "A few distinctive words." },
+    project: { type: "string", description: "Project name to search only that one, or empty string for all projects." },
+  }, false),
 ];
 
 const obj = (props: Record<string, object>) => ({

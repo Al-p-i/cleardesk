@@ -43,7 +43,7 @@ files.set(P.notes, "");
 files.set(P.tasks, "");
 
 const store = new Store(app);
-Object.assign(store, { readMeta: async () => ({ color: "", goal: "", status: "", order: 0, key_facts: [] }), projectFiles: () => [] });
+Object.assign(store, { projectFiles: () => [] });
 
 // ---- storage ----
 assert.deepEqual(chatOfPath("APARTMENTS/_project/chats/c-k2j3a"), { folder: "APARTMENTS", chat: "c-k2j3a" });
@@ -111,7 +111,28 @@ await store.updateChatInfo("APARTMENTS", "c-k2j3a", { archived: true });
 list = await store.listChats("APARTMENTS");
 assert.deepEqual(list.map((x) => [x.title, x.archived]).sort(), [["Contract questions", true], ["Moving", false]]);
 assert.match(files.get(P.chatFile("c-p9x1z"))!, /moving boxes/, "messages kept on rename");
+assert.match(await store.mainUpdated("APARTMENTS"), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, "Main's last message time");
+assert.equal(await store.mainUpdated("NOWHERE"), "");
 console.log("rename and archive ok");
+
+// The first chat is an ordinary chat: named after the project, sorted by activity, renamable, archivable.
+let all = await store.allChats("APARTMENTS");
+const first = all.find((x) => x.id === MAIN)!;
+assert.equal(first.title, "APARTMENTS");
+assert.equal(first.archived, false);
+assert.ok(all.every((x, i) => i === 0 || all[i - 1].updated >= x.updated), "most recent first, the first chat included");
+await store.updateChatInfo("APARTMENTS", MAIN, { title: "General" });
+assert.match(files.get(P.meta)!, /"chat_title":"General"/, "its title lives in project.md");
+assert.equal((await store.allChats("APARTMENTS")).find((x) => x.id === MAIN)!.title, "General");
+assert.match(files.get(P.chat("2026-10"))!, /first main message/, "its messages stay where they were");
+await store.updateChatInfo("APARTMENTS", MAIN, { title: "APARTMENTS" });
+assert.ok(!files.get(P.meta)!.includes("chat_title"), "renaming back to the project's name clears the override");
+await store.updateChatInfo("APARTMENTS", MAIN, { archived: true });
+all = await store.allChats("APARTMENTS");
+assert.equal(all.find((x) => x.id === MAIN)!.archived, true);
+await store.updateChatInfo("APARTMENTS", MAIN, { archived: false });
+assert.ok(!files.get(P.meta)!.includes("chat_archived"));
+console.log("first chat is an ordinary chat ok");
 
 // Search covers every chat, archived ones too, and says where each hit is.
 const hits = await store.searchChat(["APARTMENTS"], ["clause"]);
