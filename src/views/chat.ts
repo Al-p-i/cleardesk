@@ -302,7 +302,14 @@ export class ChatView extends ItemView {
       nodes.push(r.el);
     }
     for (const gone of old.values()) this.removeChild(gone.md);
-    this.listEl.replaceChildren(...nodes);
+    // Put the list in order without taking unchanged messages out of the page: a moved
+    // element is re-created by the browser, which would reload maps and widgets in it.
+    const keep = new Set(nodes);
+    for (const child of Array.from(this.listEl.children)) if (!keep.has(child as HTMLElement)) child.remove();
+    nodes.forEach((node, i) => {
+      const at = this.listEl.children[i];
+      if (at !== node) this.listEl.insertBefore(node, at ?? null);
+    });
     if (this.liveText) this.renderLive();
     this.renderMissingBar();
   }

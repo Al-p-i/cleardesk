@@ -15,6 +15,7 @@ import { filesSummary, historySize, noteLine, notesContext, sameStatement, searc
 const CONTEXT_NOTE_CHARS = 600;
 import { Geocoder, mapReport, resolveMap } from "./geo";
 import { eventBlock, eventFromInput, eventWhen } from "./calendar";
+import { isWidgetFile, widgetBlock, widgetFile, widgetFileName, widgetFromInput, widgetRef } from "./widget";
 import { MAP_COLORS, mapBlock, mapFile, mapFileName, mapRef, blocksAsText } from "./map";
 
 type BetaTool = Anthropic.Beta.Messages.BetaTool;
@@ -196,7 +197,9 @@ export class Controller {
       return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data }, title: f.name }];
     }
     if (TEXT_TYPES.includes(ext)) {
-      const text = blocksAsText(await this.store.read(f.path));
+      // Saved widgets come back as their code, so they can be changed rather than rebuilt.
+      const raw = await this.store.read(f.path);
+      const text = isWidgetFile(f.path) ? raw : blocksAsText(raw);
       const body = text.length > 40000 ? text.slice(0, 40000) + "\n…(truncated)" : text;
       return [{ type: "text", text: `${label}:\n\n${body}` }];
     }
@@ -303,6 +306,7 @@ export class Controller {
     // sometimes retries with better addresses); maps with other titles are kept.
     const maps = new Map<string, string>();
     const events: string[] = []; // calendar-event cards, shown after the maps
+    const widgets: string[] = []; // interactive widgets, shown last
     let live = "";
     let status = "";
     const push = () => this.onStream?.(project.folder, chat, live, status);
@@ -501,6 +505,22 @@ export class Controller {
           }
           return out.length ? out.join("\n") : "Nothing found. Try fewer or different words.";
         }
+        case "show_widget": {
+          const w = widgetFromInput(input);
+          if ("error" in w) return w.error;
+          if (input.save !== true && input.save !== "true") {
+            widgets.push(widgetBlock(w));
+            return "The widget appears under your reply, in a sandboxed offline frame. Later you'll only see its title and description; to change it, send a complete new version.";
+          }
+          // A saved widget is a project file shared by all chats; the reply shows it live.
+          const at = projectPath(project.folder, widgetFileName(w.title));
+          if ("error" in at) return at.error;
+          const existed = !!this.store.file(at.path);
+          await this.store.modify(at.path, () => widgetFile(w), tx);
+          receipts.push(`🧩 Widget ${existed ? "updated" : "saved"} · [[${at.path.replace(/\.md$/, "")}|${w.title}]]`);
+          widgets.push(widgetRef(at.path));
+          return `The widget appears under your reply. ${existed ? "Updated" : "Saved as"} ${relPath(project.folder, at.path)}, shared by all chats; to change it later, read that file first.`;
+        }
         case "add_calendar_event": {
           const ev = eventFromInput(input);
           if ("error" in ev) return ev.error;
@@ -547,7 +567,7 @@ export class Controller {
         onText: (d) => { live += d; status = ""; push(); },
         onTool: (name) => { status = TOOL_STATUS[name] ?? "Working…"; push(); },
       });
-      const body = [reply, ...maps.values(), ...events].filter(Boolean).join("\n\n");
+      const body = [reply, ...maps.values(), ...events, ...widgets].filter(Boolean).join("\n\n");
       if (body) await this.store.appendChat(project.folder, "ai", body, {}, chat);
     } finally {
       this.busy.delete(busyKey);
@@ -744,6 +764,7 @@ How the workspace works:
 - Google links: for docs.google.com and drive.google.com links always use read_google_doc, never web_fetch (web_fetch only sees an empty preview of Google Docs). A Docs link without a tab returns all tabs; with ?tab= it returns that tab only, so if the owner asks about another part of the document, read the link again without the tab parameter. Private files can't be opened: suggest sharing as "Anyone with the link can view", or downloading into the project folder.
 - Maps: when the owner asks to see places on a map (or to compare where things are), call show_map once with everything the map should show. Give each place a full address with city (or "lat, lng"), and its note_id when it comes from a note. Use colours to mean something (e.g. shortlisted vs rejected) and explain them in the legend. Areas are named neighbourhoods or districts ("Kreuzberg, Berlin") and get their real outline. Circles mark a distance around a place; lines connect two places. To change a map, call show_map again with the full new map; in the same reply, a map with the same title replaces the earlier one. The map appears under your reply, so don't list coordinates. When the owner wants to keep or track a map, or a saved map with that title exists (Maps/ in the files overview), use save: true: it creates or updates Maps/<title>.md, which every chat shares and the owner can open. To change a saved map, read it with read_file first if its places aren't in the conversation, then send the full updated map with the same title.
 - Calendar: when the owner asks to put something in their calendar (a viewing, a call, a trip), call add_calendar_event once per event, with dates and 24-hour times in their local time. It shows a card with Google Calendar and Apple Calendar buttons; the owner adds it themselves. Never create events they didn't ask for, and don't add a task as well unless they ask.
+- Widgets: when the owner asks for something interactive or visual (a calculator, a chart, a comparison with weights to adjust, a checklist), call show_widget with a self-contained page body: markup plus inline <style> and <script>. It runs in a sandboxed frame with no network and no storage: no external scripts, styles, fonts or images (draw charts with SVG or canvas), no fetch, no localStorage, no alert/confirm, no forms that submit. Put the numbers it needs straight into it. Use the CSS variables --text, --muted, --faint, --bg, --surface, --border, --accent and --font so it matches the owner's theme, keep it responsive (it's often narrow), and under 100 KB. You may offer a widget, but don't make one for an ordinary question. When the owner wants to keep a widget, or a saved one with that title exists (Widgets/ in the files overview), use save: true: it creates or updates Widgets/<title>.md, which every chat shares. To change a saved widget, read_file it first to get its code, then send the full updated version with the same title and save: true.
 - The web: when web_search and web_fetch are available, use them for current information and to read other links the owner pastes.
 
 Reply briefly and directly, in plain language. When you only filed something, a short confirmation or no text at all is fine: the app shows a receipt for every change.`;
@@ -781,6 +802,7 @@ const TOOL_STATUS: Record<string, string> = {
   create_document: "Writing the document… (can take a minute)",
   show_map: "Making the map…",
   add_calendar_event: "Preparing the event…",
+  show_widget: "Building the widget…",
   read_project: "Looking at the project…",
   search_projects: "Searching your projects…",
 };
@@ -865,6 +887,12 @@ const TOOLS: BetaTool[] = [
   tool("search_chat", "Search the full chat history of this project. Every word must appear in a message.", {
     query: { type: "string", description: "A few distinctive words to look for." },
   }, false),
+  tool("show_widget", "Show an interactive widget under your reply (calculator, chart, scorecard, checklist): a self-contained page body with inline style and script, run sandboxed and offline.", {
+    title: { type: "string", description: "Short title shown above the widget." },
+    description: { type: "string", description: "One line on what it does and shows; this is all you'll see of it later." },
+    html: { type: "string", description: "The page body: markup with inline <style> and <script>. No external resources." },
+    save: { type: "boolean", description: "true to keep it as the project file Widgets/<title>.md (creating it, or updating the saved widget with this title); false for a one-off widget in the chat." },
+  }, false), // checks its own input (widgetFromInput), keeping the strict grammar small
   tool("add_calendar_event", "Prepare a calendar event that the owner adds to Google or Apple Calendar with one click. Only when the owner asks to put something in their calendar.", {
     title: { type: "string", description: "Short event title, e.g. Viewing Oranienstr. 12." },
     date: { type: "string", description: "Start date, YYYY-MM-DD." },

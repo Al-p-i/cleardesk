@@ -11,7 +11,7 @@ const store = new Store({} as any);
 const chat: any[] = [];
 Object.assign(store, {
   read: async (p: string) => files.get(p) ?? "",
-  file: (p: string) => (files.has(p) ? { path: p } : null),
+  file: (p: string) => (files.has(p) ? { path: p, name: p.split("/").pop(), extension: p.split(".").pop(), stat: { size: files.get(p)!.length } } : null),
   modify: async (p: string, fn: (t: string) => string) => { files.set(p, fn(files.get(p) ?? "")); },
   readMeta: async () => ({ color: "", goal: "", status: "", order: 0, key_facts: [] }),
   tasks: async () => [], notes: async () => [], projectFiles: () => [], recentChat: async () => chat,
@@ -108,7 +108,7 @@ console.log("map lookup failure ok");
 // ("compiled grammar is too large"): only the tools that change things are strict.
 const strict = tools.filter((t) => t.strict).map((t) => t.name);
 assert.ok(strict.length <= 15, `strict tools: ${strict.join(", ")}`);
-for (const t of ["show_map", "read_file", "list_files", "search_notes", "search_chat", "read_google_doc", "add_calendar_event"]) assert.ok(!strict.includes(t), `${t} isn't strict`);
+for (const t of ["show_map", "read_file", "list_files", "search_notes", "search_chat", "read_google_doc", "add_calendar_event", "show_widget"]) assert.ok(!strict.includes(t), `${t} isn't strict`);
 for (const t of tools.filter((x) => x.strict)) {
   const s = t.input_schema;
   assert.deepEqual(s.required, Object.keys(s.properties), `${t.name}: no optional parameters`);
@@ -196,3 +196,46 @@ assert.equal(calReply, 'Here\'s the viewing.\n\n```cleardesk-event\n{"title":"Vi
 assert.match(badReport, /YYYY-MM-DD/);
 assert.match(eventReport, /Thu 29 Oct · 18:00–19:00/);
 console.log("calendar event card ok");
+
+// show_widget: the widget goes under the reply; a widget loading from the web is sent back to Claude.
+let widgetReport = "", badWidget = "";
+const wid: any = {
+  configured: true, webAccess: false,
+  chat: async ({ exec }: any) => {
+    badWidget = await exec("show_widget", { title: "Chart", description: "", html: '<script src="https://cdn.example/x.js"></script>' });
+    widgetReport = await exec("show_widget", { title: "Budget", description: "Monthly costs as bars", html: "<svg></svg>" });
+    return "Here's your budget.";
+  },
+};
+await new Controller(store, wid, () => {}).send(project, "chart my budget");
+assert.equal(chat.filter((e) => e.kind === "ai").pop()!.body, 'Here\'s your budget.\n\n```cleardesk-widget\n{"title":"Budget","description":"Monthly costs as bars","html":"<svg></svg>"}\n```');
+assert.match(badWidget, /offline/);
+assert.match(widgetReport, /sandboxed offline frame/);
+console.log("widget ok");
+
+// save: true keeps the widget as Widgets/<title>.md; the reply shows it live; read_file gives its code.
+let savedWidgetReport = "", widgetCode = "";
+const ws: any = {
+  configured: true, webAccess: false,
+  chat: async ({ exec }: any) => {
+    savedWidgetReport = await exec("show_widget", { title: "Budget", description: "Monthly costs", html: "<svg id=v1></svg>", save: true });
+    widgetCode = await exec("read_file", { path: "Widgets/Budget.md" });
+    return "Saved it.";
+  },
+};
+await new Controller(store, ws, () => {}).send(project, "keep a budget chart");
+const wfile = files.get("APARTMENTS/Widgets/Budget.md")!;
+assert.match(wfile, /^# Budget\n\nMonthly costs\n\n```cleardesk-widget\n/);
+assert.equal(chat.filter((e) => e.kind === "ai").pop()!.body, 'Saved it.\n\n```cleardesk-widget\n{"file":"APARTMENTS/Widgets/Budget.md"}\n```');
+assert.match(chat.filter((e) => e.kind === "receipt").pop()!.body, /🧩 Widget saved · \[\[APARTMENTS\/Widgets\/Budget\|Budget\]\]/);
+assert.match(savedWidgetReport, /Saved as Widgets\/Budget\.md, shared by all chats/);
+assert.match(JSON.stringify(widgetCode), /<svg id=v1><\/svg>/, "Claude reads a saved widget's code, not just its description");
+ws.chat = async ({ exec }: any) => {
+  savedWidgetReport = await exec("show_widget", { title: "Budget", description: "Monthly costs with notary fee", html: "<svg id=v2></svg>", save: true });
+  return "Updated.";
+};
+await new Controller(store, ws, () => {}).send(project, "add the notary fee");
+assert.match(files.get("APARTMENTS/Widgets/Budget.md")!, /id=v2/);
+assert.match(savedWidgetReport, /Updated Widgets\/Budget\.md/);
+assert.match(chat.filter((e) => e.kind === "receipt").pop()!.body, /🧩 Widget updated/);
+console.log("saved project widget ok");

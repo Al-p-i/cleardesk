@@ -15,6 +15,8 @@ import { projectPath, relPath } from "./paths";
 import { MapChild } from "./views/map";
 import { CalEvent, EVENT_BLOCK, googleCalendarUrl, icsFile, parseEvent } from "./calendar";
 import { renderEventCard } from "./views/event";
+import { WIDGET_BLOCK, WidgetSpec, isWidgetFile, parseWidget, widgetFile, widgetFileName, widgetRefPath } from "./widget";
+import { WidgetChild } from "./views/widget";
 import { openExternal } from "./views/links";
 import { ClearDeskSettingTab } from "./settings";
 
@@ -78,6 +80,19 @@ export default class ClearDesk extends Plugin {
     this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
     this.registerView(PANEL_VIEW, (leaf) => new PanelView(leaf, this));
     // Maps Claude shows in chat; they also draw wherever the block appears in the vault.
+    // Interactive widgets Claude wrote: run in a sandboxed, offline frame.
+    this.registerMarkdownCodeBlockProcessor(WIDGET_BLOCK, (src, el, ctx) => {
+      const file = widgetRefPath(src);
+      const w = file ? null : parseWidget(src);
+      if (!file && !w) {
+        el.createDiv({ cls: "cd-muted", text: "This widget couldn't be read." });
+        return;
+      }
+      ctx.addChild(new WidgetChild(el, file ? { file } : { spec: w! }, {
+        app: this.app,
+        save: isWidgetFile(ctx.sourcePath) ? undefined : (spec) => this.saveWidget(ctx.sourcePath, spec),
+      }));
+    });
     // Calendar events Claude prepared: a card with a button per calendar.
     this.registerMarkdownCodeBlockProcessor(EVENT_BLOCK, (src, el, ctx) => {
       const ev = parseEvent(src);
@@ -460,6 +475,17 @@ export default class ClearDesk extends Plugin {
       const electron = (window as unknown as { require?: (m: string) => { shell: { openPath(p: string): Promise<string> } } }).require?.("electron");
       await electron?.shell.openPath(adapter.getFullPath(path));
     } else new Notice("Couldn't open Apple Calendar here. Use the Google Calendar button, or add it from your Mac.");
+  }
+
+  /** "Save to project" on a widget in the chat: keep it as Widgets/<title>.md in its project. */
+  async saveWidget(sourcePath: string, w: WidgetSpec) {
+    const p = this.projects.find((x) => sourcePath === x.folder || sourcePath.startsWith(x.folder + "/"));
+    if (!p) return;
+    const at = projectPath(p.folder, widgetFileName(w.title));
+    if ("error" in at) return new Notice(at.error);
+    if (this.store.file(at.path) && !window.confirm(`Replace the saved widget "${w.title}"?`)) return;
+    await this.store.modify(at.path, () => widgetFile(w));
+    new Notice(`Widget saved: ${relPath(p.folder, at.path)}`);
   }
 
   /** "Save to project" on a map in the chat: keep it as Maps/<title>.md in its project. */

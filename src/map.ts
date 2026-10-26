@@ -6,6 +6,7 @@
 //   ```
 
 import { EVENT_BLOCK, eventText, parseEvent } from "./calendar";
+import { WIDGET_BLOCK, parseWidget, widgetRefPath, widgetText } from "./widget";
 
 export const MAP_BLOCK = "cleardesk-map";
 
@@ -103,12 +104,18 @@ export function mapText(spec: MapSpec): string {
   return lines.join("\n");
 }
 
-const BLOCK_RE = new RegExp("```(" + MAP_BLOCK + "|" + EVENT_BLOCK + ")\\n([\\s\\S]*?)\\n```", "g");
+const BLOCK_RE = new RegExp("```(" + MAP_BLOCK + "|" + EVENT_BLOCK + "|" + WIDGET_BLOCK + ")\\n([\\s\\S]*?)\\n```", "g");
 
-/** Replace every map and calendar-event block in a message with its text form. */
+/** Replace every map, calendar-event and widget block in a message with its text form. */
 export function blocksAsText(body: string): string {
-  if (!body.includes("```" + MAP_BLOCK) && !body.includes("```" + EVENT_BLOCK)) return body;
+  if (![MAP_BLOCK, EVENT_BLOCK, WIDGET_BLOCK].some((b) => body.includes("```" + b))) return body;
   return body.replace(BLOCK_RE, (_, kind: string, src: string) => {
+    if (kind === WIDGET_BLOCK) {
+      const saved = widgetRefPath(src);
+      if (saved) return `[Saved widget, always current: ${saved}]`;
+      const w = parseWidget(src);
+      return w ? `[${widgetText(w)}]` : "[Widget]";
+    }
     if (kind === EVENT_BLOCK) {
       const ev = parseEvent(src);
       return ev ? `[${eventText(ev)}]` : "[Calendar event]";
